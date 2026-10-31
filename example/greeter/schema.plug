@@ -1,0 +1,97 @@
+// greeter describes a small service used to demonstrate and test Plug.
+//
+// Retrieve a [User] with [greeter.getUser], or enumerate users with
+// [greeter.listUsers].
+package greeter version 1
+
+// user.read allows callers to read greeter users.
+permission user.read
+
+// Data model groups values exchanged by the greeter API.
+category "Data model"
+
+// UserID represents a stable user identifier.
+type UserID = i64
+
+// Role represents an access role assigned to a user.
+type Role
+
+// admin represents an administrative user.
+admin
+  // level specifies the administrative level.
+  level: u32
+= Role
+
+// guest represents an unprivileged role.
+guest = Role
+
+// user represents a user known to the greeter.
+user
+  // id contains the stable internal identifier.
+  id: UserID
+  // name contains the display name.
+  name: string
+  // labels contains searchable labels.
+  labels: list<string>
+  // role identifies the access role.
+  role: Role
+  // email contains the contact address when known.
+  email: string?
+= User
+
+// LookupError represents an error returned when a user lookup fails.
+type LookupError
+
+// notFound indicates that the requested user does not exist.
+notFound
+  // id contains the missing identifier.
+  id: UserID
+= LookupError httpStatus 404
+
+// forbidden indicates that the caller cannot access the requested user.
+forbidden
+  // reason contains the human-readable denial reason.
+  reason: string
+= LookupError httpStatus 403
+
+// Users groups operations that read and enumerate greeter users.
+category "Users"
+
+// greeter.getUser returns the requested user.
+//
+// # Lookup
+//
+// The lookup uses a stable [UserID]:
+//
+//     greeter.getUser id: 1
+//
+// Possible results include:
+//
+//   - A [User] when the caller can read it.
+//   - A [LookupError] when the lookup fails.
+greeter.getUser
+  // id identifies the user to look up.
+  //
+  // Use the [UserID] returned by [greeter.listUsers].
+  id: UserID
+-> User
+  throws LookupError
+  requires user.read
+  http GET "/v1/users/{id}"
+  http POST "/v1/get-user"
+
+// greeter.listUsers lists at most the requested number of users.
+greeter.listUsers
+  // limit specifies the maximum number of users to return.
+  limit: u32
+-> list<User>
+  requires user.read
+  http GET "/v1/users"
+
+// Service groups service-level diagnostics.
+category "Service"
+
+// greeter.ping checks that the server is alive.
+greeter.ping -> void
+  public
+  http GET "/healthz"

@@ -1,0 +1,45 @@
+-- schema.plug --
+// docs describes a service returning [User].
+//
+// # Usage
+//
+//     docs.get id: 1
+//         nested example
+//
+// See [the guide].
+//
+// [the guide]: https://example.com/guide
+package docs
+
+// Read permission for [docs.get].
+permission user.read
+
+// Users includes [User] and [docs.get].
+category "Users"
+
+// User represents a result.
+type User
+
+// user contains a result.
+//
+//   - Retains [User] references.
+//   - Preserves lists.
+user
+  // id contains an identifier.
+  //
+  //     123
+  id: i64
+= User
+
+// docs.get returns a [User].
+//
+// Next steps:
+//
+//   1. Read [User].
+//   2. Return to [docs.get].
+docs.get
+  // id selects a user.
+  //
+  // More details about the identifier.
+  id: i64
+-> User requires user.read

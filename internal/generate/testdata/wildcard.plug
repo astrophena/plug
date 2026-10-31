@@ -1,0 +1,15 @@
+// wildcard tests HTTP path generation.
+package wildcard version 1
+
+// Path is a slash-separated path.
+type Path = string
+
+// wildcard.browse projects a repository and optional path.
+wildcard.browse
+  // repository names a repository.
+  repository: string
+  // path names a path, defaulting to the root.
+  path: Path?
+  // rev selects a revision.
+  rev: string?
+-> void public http GET "/repos/{repository}/contents/{path...}"

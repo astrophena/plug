@@ -1,0 +1,121 @@
+// golden describes generator golden tests.
+//
+// Read an [Item] with [golden.get]. See [the guide].
+//
+// [the guide]: https://example.com/guide
+package golden version 1
+
+// item.read allows callers to read items.
+permission item.read
+
+// ItemID represents an item identifier.
+type ItemID = i64
+
+// Choice represents an item choice.
+type Choice
+
+// left represents the left choice.
+left
+  // label contains the choice label.
+  label: string
+= Choice
+
+// right represents the right choice.
+right = Choice
+
+// item represents an item.
+item
+  // id identifies the item.
+  id: ItemID
+  // labels contains item labels.
+  labels: list<string>
+  // values contains nested values.
+  values: list<list<u32>>
+  // choice selects the item choice.
+  choice: Choice
+  // note contains an optional note.
+  note: string?
+= Item
+
+// APIError represents an item API error.
+type APIError
+
+// notFound indicates that an item was not found.
+notFound
+  // id identifies the missing item.
+  id: ItemID
+= APIError httpStatus 404
+
+// invalid indicates that an item request was invalid.
+invalid
+  // reason contains the failure reason.
+  reason: string
+= APIError httpStatus 400
+
+// golden.get returns an item when it exists.
+//
+// # Lookup
+//
+// See [Item], [golden.update], and [golden.open]. Unknown [Missing] stays literal.
+//
+//   - Return an [Item].
+//   - Report an [APIError] on failure.
+//
+// Example:
+//
+//     [golden.get] id: 1
+//         [Item]
+golden.get
+  // id identifies the item.
+  //
+  // Use the [ItemID] from [golden.update].
+  id: ItemID
+  // labels filters item labels.
+  labels: list<string>?
+  // token carries an opaque token.
+  token: bytes?
+-> Item?
+  throws APIError
+  requires item.read
+  http POST "/lookup"
+  http GET "/items/{id}"
+
+// golden.listItems lists items up to the optional limit.
+golden.listItems
+  // limit caps the number of returned items.
+  limit: u32?
+-> list<Item> public http GET "/items"
+
+// golden.update updates an item.
+golden.update
+  // id identifies the item.
+  id: ItemID
+  // item contains the replacement item.
+  item: Item
+-> void
+  public
+  http PUT "/items/{id}"
+
+// golden.ping checks service health.
+golden.ping -> void public http GET "/healthz"
+
+// failed reports that a stream could not be opened.
+failed
+  // reason describes the failure.
+  reason: string
+= OpenError
+
+// golden.connect opens a raw stream or returns a declared error.
+golden.connect
+  // id identifies the stream.
+  id: ItemID
+-> raw throws OpenError public
+
+// golden.open opens a raw stream.
+golden.open
+  // id identifies the stream.
+  id: ItemID
+-> raw public
+
+// golden.attach opens a raw stream without request fields.
+golden.attach -> raw public

@@ -1,0 +1,35 @@
+-- queries.purl --
+"Bob"
+true
+false
+nil
+false
+true
+-- keys.purl --
+[3, 1, 2]
+[{
+    key: 1,
+    count: 2
+  }, {
+    key: 2,
+    count: 1
+  }]
+[{
+    key: "a",
+    items: ["a", "a"]
+  }, {
+    key: "b",
+    items: ["b"]
+  }]
+[[1], [2]]
+[]
+-- totals.purl --
+18446744073709551616
+6.5
+0
+nil
+-- guard.purl --
+error: 1:7: assert: Expected exactly one channel
+-- sorting.purl --
+["second", "first", "third"]
+[]

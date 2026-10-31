@@ -1,0 +1,90 @@
+-- normalized --
+Users are represented by [User] and [value]. See [users.get], [users.Get],
+[Users.get], and [Users.Get]. Unknown references such as [Missing],
+[users.Missing], [io.Reader], and [example.com/pkg.Name] stay literal.
+
+# Examples
+
+  - Read a [User] with [users.get].
+    Continue with another sentence.
+  - Keep [Missing] as written.
+
+Numbered steps:
+
+ 1. Find a [User].
+ 2. Call [Users.Get].
+
+Preformatted text keeps references and indentation:
+
+	[users.get] id: 1
+	    [User]
+
+Raw HTML is text: <script>alert("hello")</script>.
+See [the guide] or https://example.com/guide.
+
+[the guide]: https://example.com/guide?q=one&other=two
+-- generated comment --
+Users are represented by User and value. See users.get, users.Get,
+Users.get, and Users.Get. Unknown references such as [Missing],
+[users.Missing], [io.Reader], and [example.com/pkg.Name] stay literal.
+
+# Examples
+
+  - Read a User with users.get.
+    Continue with another sentence.
+  - Keep [Missing] as written.
+
+Numbered steps:
+
+ 1. Find a User.
+ 2. Call Users.Get.
+
+Preformatted text keeps references and indentation:
+
+	[users.get] id: 1
+	    [User]
+
+Raw HTML is text: <script>alert("hello")</script>.
+See [the guide] or https://example.com/guide.
+
+[the guide]: https://example.com/guide?q=one&other=two
+-- HTML --
+<p>Users are represented by <a href="/schema/User">User</a> and <a href="/schema/value">value</a>. See <a href="/schema/users.get">users.get</a>, <a href="/schema/users.Get">users.Get</a>,
+<a href="/schema/Users.get">Users.get</a>, and <a href="/schema/Users.Get">Users.Get</a>. Unknown references such as [Missing],
+[users.Missing], [io.Reader], and [example.com/pkg.Name] stay literal.
+<h3>Examples</h3>
+<ul>
+<li>Read a <a href="/schema/User">User</a> with <a href="/schema/users.get">users.get</a>.
+Continue with another sentence.
+<li>Keep [Missing] as written.
+</ul>
+<p>Numbered steps:
+<ol>
+<li>Find a <a href="/schema/User">User</a>.
+<li>Call <a href="/schema/Users.Get">Users.Get</a>.
+</ol>
+<p>Preformatted text keeps references and indentation:
+<pre>[users.get] id: 1
+    [User]
+</pre>
+<p>Raw HTML is text: &lt;script&gt;alert(&quot;hello&quot;)&lt;/script&gt;.
+See <a href="https://example.com/guide?q=one&amp;other=two">the guide</a> or <a href="https://example.com/guide">https://example.com/guide</a>.
+-- Markdown --
+Users are represented by [User](/schema/User) and [value](/schema/value). See [users.get](/schema/users.get), [users.Get](/schema/users.Get), [Users.get](/schema/Users.get), and [Users.Get](/schema/Users.Get). Unknown references such as \[Missing], \[users.Missing], \[io.Reader], and \[example.com/pkg.Name] stay literal.
+
+### Examples
+
+  - Read a [User](/schema/User) with [users.get](/schema/users.get). Continue with another sentence.
+  - Keep \[Missing] as written.
+
+Numbered steps:
+
+ 1. Find a [User](/schema/User).
+ 2. Call [Users.Get](/schema/Users.Get).
+
+Preformatted text keeps references and indentation:
+
+	[users.get] id: 1
+	    [User]
+
+Raw HTML is text: \<script>alert("hello")\</script>. See [the guide](https://example.com/guide?q=one&other=two) or [https://example.com/guide](https://example.com/guide).

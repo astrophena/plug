@@ -1,0 +1,56 @@
+-- simple.purl --
+#  id  name
+-  --  -------
+0  1   "Alice"
+1  2   "Bob"
+
+2 rows. Use _[0] for a full row.
+-- nested.purl --
+#  id  labels            role
+-  --  ----------------  -----------------
+0  1   ["home", "work"]  admin( level: 3 )
+1  2   []                admin( level: 1 )
+
+2 rows. Use _[0] for a full row.
+-- unicode.purl --
+#  名前    title
+-  ------  -----------------
+0  "東京"  "Привет 🇪🇺"
+1  "京都"  "👩\u200d💻 👍🏽 é"
+
+2 rows. Use _[0] for a full row.
+-- shortened.purl --
+#  text                              at
+-  --------------------------------  --------------------------------
+0  "A long message that cannot pos…  "2026-07-01T09:00:00Z" (3 hours…
+
+1 row; cells shortened. Use _[0] for a full row.
+-- values.purl --
+#  missing  ready  text
+-  -------  -----  --------------------
+0  nil      true   "two  spaces"
+1  nil      false  "line\nnext\tcolumn"
+
+2 rows. Use _[0] for a full row.
+-- functions.purl --
+#  method
+-  ------------------------------
+0  <function greeter.getUser(id)>
+
+1 row. Use _[0] for a full row.
+-- mixed.purl --
+[{
+    a: 1
+  }, {
+    b: 2
+  }]
+-- constructors.purl --
+[admin(
+    level: 1
+  ), guest()]
+-- scalar.purl --
+[1, 2, 3]
+-- empty.purl --
+[]
+-- empty-record.purl --
+[{}]

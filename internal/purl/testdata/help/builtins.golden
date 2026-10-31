@@ -1,0 +1,72 @@
+-- table --
+Call methods with named arguments:
+  overseer.getStatus()
+  let page = overseer.queryMessages(limit: 10)
+  page.items | take(3)
+
+Bindings are lazy: their first use saves the result or error, even cancellation.
+Rebind to try again, or use a function for fresh calls:
+  let status = () => overseer.getStatus()
+  status()
+
+_ holds the last successful result. x | f(y) means f(x, y).
+nil is a missing value; null is also accepted. JSON always uses null.
+A method name without parentheses shows its documentation, without calling it.
+Lists are fetched in full; pipes do not stream or fetch more pages.
+
+  :help [NAME]  help for a method, type, or function
+  :schema       show the schema
+  :vars         show user bindings
+  :quit         exit
+
+Save scripts as *.purl and run them with purl -f FILE ENDPOINT.
+Tab completes without making calls. Ctrl-R searches history.
+Long output uses $PAGER or less. NO_PAGER disables paging.
+Ctrl-C cancels input or evaluation; Ctrl-D exits.
+History may contain secrets. Start input with a space to exclude it,
+or use -no-history to disable history entirely.
+
+Builtins:
+  FUNCTION                    DESCRIPTION
+  age(timestamp)              Whole seconds since an RFC 3339 timestamp; future is negative.
+  all(items, fn)              Whether all items match; stop on false.
+  any(items, fn)              Whether any item matches; stop on true.
+  assert(condition, message)  Return nil on true; otherwise fail with message.
+  bytes(text)                 Encode a string as UTF-8 bytes.
+  contains(text, part)        Case-sensitive substring match.
+  count(items)                Count items, fields, bytes, or Unicode characters.
+  endsWith(text, part)        Case-sensitive suffix match.
+  filter(items, fn)           Keep items whose predicate is true.
+  find(items, fn)             First match, or nil; stop at the first match.
+  groupBy(items, fn)          Group equal keys into {key, items} records in first-seen order.
+  keys(record)                List record field names.
+  map(items, fn)              Apply fn to each item.
+  parseJSON(text)             Parse JSON without losing integer precision.
+  sortBy(items, fn)           Stable-sort items by their computed keys.
+  startsWith(text, part)      Case-sensitive prefix match.
+  sum(items)                  Sum numbers; empty lists yield 0.
+  take(items, n)              First n items.
+  text(bytes)                 Decode UTF-8 bytes into a string.
+  toJSON(value)               Encode a value as JSON.
+  uniqueBy(items, fn)         Keep the first item for each equal key.
+
+Methods:
+  greeter.getUser
+  greeter.listUsers
+  greeter.ping
+
+-- age --
+    age(timestamp)
+
+Whole seconds since an RFC 3339 timestamp; future is negative.
+
+-- assert --
+    assert(condition, message)
+
+Return nil on true; otherwise fail with message.
+
+-- groups --
+    groupBy(items, fn)
+
+Group equal keys into {key, items} records in first-seen order.
+

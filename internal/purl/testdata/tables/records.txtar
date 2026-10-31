@@ -1,0 +1,23 @@
+Record tables at 80 columns, with a fixed time for timestamp annotations.
+-- simple.purl --
+[{id: 1, name: "Alice"}, {name: "Bob", id: 2}]
+-- nested.purl --
+[{id: 1, labels: ["home", "work"], role: admin(level: 3)}, {id: 2, labels: [], role: admin(level: 1)}]
+-- unicode.purl --
+[{名前: "東京", title: "Привет 🇪🇺"}, {名前: "京都", title: "👩‍💻 👍🏽 é"}]
+-- shortened.purl --
+[{text: "A long message that cannot possibly fit inside a tiny table cell.", at: "2026-07-01T09:00:00Z"}]
+-- values.purl --
+[{missing: nil, ready: true, text: "two  spaces"}, {missing: nil, ready: false, text: "line\nnext\tcolumn"}]
+-- functions.purl --
+[{method: greeter.getUser}]
+-- mixed.purl --
+[{a: 1}, {b: 2}]
+-- constructors.purl --
+[admin(level: 1), guest()]
+-- scalar.purl --
+[1, 2, 3]
+-- empty.purl --
+[]
+-- empty-record.purl --
+[{}]

@@ -1,0 +1,54 @@
+-- lookup.purl --
+user(
+  id: 42,
+  name: "Alice",
+  labels: ["home", "work"],
+  role: admin(
+    level: 3
+  ),
+  email: "alice@example.test"
+)
+"Alice"
+admin(
+  level: 3
+)
+-- pipeline.purl --
+["Alice", "Bob"]
+["Alice"]
+-- error.purl --
+error: 1:16: notFound(
+  id: 0
+)
+-- previous.purl --
+["Alice", "Bob"]
+-- values.purl --
+18446744073709551615
+"hello"
+-- documentation.purl --
+    greeter.getUser
+      id: UserID
+    -> User
+      throws LookupError
+      requires user.read
+
+greeter.getUser returns the requested user.
+
+# Lookup
+
+The lookup uses a stable [UserID]:
+
+	greeter.getUser id: 1
+
+Possible results include:
+
+  - A [User] when the caller can read it.
+  - A [LookupError] when the lookup fails.
+
+id: id identifies the user to look up.
+
+Use the [UserID] returned by [greeter.listUsers].
+
+"Alice"
+-- nil.purl --
+[nil, nil, nil]
+"[null]"

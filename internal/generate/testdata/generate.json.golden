@@ -1,0 +1,418 @@
+{
+  "format_version": 1,
+  "protocol_version": 1,
+  "package": "golden",
+  "major": 1,
+  "family": "bab6862c37b655e38034d35c798bce42d1812761252f3f9a0f14af6398475b6d",
+  "fingerprint": "ecce87213eae6b1a098ade07d85b3d8e5a25e43e50afb155981793bdbb6e836a",
+  "documentation": "golden describes generator golden tests.\n\nRead an [Item] with [golden.get]. See [the guide].\n\n[the guide]: https://example.com/guide",
+  "permissions": [
+    {
+      "name": "item.read",
+      "documentation": "item.read allows callers to read items."
+    }
+  ],
+  "types": [
+    {
+      "name": "APIError",
+      "documentation": "APIError represents an item API error.",
+      "kind": "sum",
+      "underlying": "",
+      "error": true,
+      "constructors": [
+        {
+          "name": "invalid",
+          "documentation": "invalid indicates that an item request was invalid.",
+          "id": 419722813,
+          "fields": [
+            {
+              "name": "reason",
+              "documentation": "reason contains the failure reason.",
+              "type": {
+                "kind": "primitive",
+                "name": "string",
+                "optional": false
+              }
+            }
+          ],
+          "http_status": 400
+        },
+        {
+          "name": "notFound",
+          "documentation": "notFound indicates that an item was not found.",
+          "id": 88342240,
+          "fields": [
+            {
+              "name": "id",
+              "documentation": "id identifies the missing item.",
+              "type": {
+                "kind": "named",
+                "name": "ItemID",
+                "optional": false
+              }
+            }
+          ],
+          "http_status": 404
+        }
+      ]
+    },
+    {
+      "name": "Choice",
+      "documentation": "Choice represents an item choice.",
+      "kind": "sum",
+      "underlying": "",
+      "error": false,
+      "constructors": [
+        {
+          "name": "left",
+          "documentation": "left represents the left choice.",
+          "id": 3874517606,
+          "fields": [
+            {
+              "name": "label",
+              "documentation": "label contains the choice label.",
+              "type": {
+                "kind": "primitive",
+                "name": "string",
+                "optional": false
+              }
+            }
+          ],
+          "http_status": 0
+        },
+        {
+          "name": "right",
+          "documentation": "right represents the right choice.",
+          "id": 1796254556,
+          "fields": [],
+          "http_status": 0
+        }
+      ]
+    },
+    {
+      "name": "Item",
+      "documentation": "item represents an item.",
+      "kind": "record",
+      "underlying": "",
+      "error": false,
+      "constructors": [
+        {
+          "name": "item",
+          "documentation": "item represents an item.",
+          "id": 2418743302,
+          "fields": [
+            {
+              "name": "id",
+              "documentation": "id identifies the item.",
+              "type": {
+                "kind": "named",
+                "name": "ItemID",
+                "optional": false
+              }
+            },
+            {
+              "name": "labels",
+              "documentation": "labels contains item labels.",
+              "type": {
+                "kind": "list",
+                "element": {
+                  "kind": "primitive",
+                  "name": "string",
+                  "optional": false
+                },
+                "optional": false
+              }
+            },
+            {
+              "name": "values",
+              "documentation": "values contains nested values.",
+              "type": {
+                "kind": "list",
+                "element": {
+                  "kind": "list",
+                  "element": {
+                    "kind": "primitive",
+                    "name": "u32",
+                    "optional": false
+                  },
+                  "optional": false
+                },
+                "optional": false
+              }
+            },
+            {
+              "name": "choice",
+              "documentation": "choice selects the item choice.",
+              "type": {
+                "kind": "named",
+                "name": "Choice",
+                "optional": false
+              }
+            },
+            {
+              "name": "note",
+              "documentation": "note contains an optional note.",
+              "type": {
+                "kind": "primitive",
+                "name": "string",
+                "optional": true
+              }
+            }
+          ],
+          "http_status": 0
+        }
+      ]
+    },
+    {
+      "name": "ItemID",
+      "documentation": "ItemID represents an item identifier.",
+      "kind": "newtype",
+      "underlying": "i64",
+      "error": false,
+      "constructors": []
+    },
+    {
+      "name": "OpenError",
+      "documentation": "failed reports that a stream could not be opened.",
+      "kind": "record",
+      "underlying": "",
+      "error": true,
+      "constructors": [
+        {
+          "name": "failed",
+          "documentation": "failed reports that a stream could not be opened.",
+          "id": 3516968545,
+          "fields": [
+            {
+              "name": "reason",
+              "documentation": "reason describes the failure.",
+              "type": {
+                "kind": "primitive",
+                "name": "string",
+                "optional": false
+              }
+            }
+          ],
+          "http_status": 0
+        }
+      ]
+    }
+  ],
+  "categories": [],
+  "methods": [
+    {
+      "name": "golden.attach",
+      "documentation": "golden.attach opens a raw stream without request fields.",
+      "id": 901404127,
+      "fields": [],
+      "response": {
+        "kind": "primitive",
+        "name": "raw",
+        "optional": false
+      },
+      "error": "",
+      "public": true,
+      "permission": "",
+      "http": []
+    },
+    {
+      "name": "golden.connect",
+      "documentation": "golden.connect opens a raw stream or returns a declared error.",
+      "id": 1893273135,
+      "fields": [
+        {
+          "name": "id",
+          "documentation": "id identifies the stream.",
+          "type": {
+            "kind": "named",
+            "name": "ItemID",
+            "optional": false
+          }
+        }
+      ],
+      "response": {
+        "kind": "primitive",
+        "name": "raw",
+        "optional": false
+      },
+      "error": "OpenError",
+      "public": true,
+      "permission": "",
+      "http": []
+    },
+    {
+      "name": "golden.get",
+      "documentation": "golden.get returns an item when it exists.\n\n# Lookup\n\nSee [Item], [golden.update], and [golden.open]. Unknown [Missing] stays literal.\n\n  - Return an [Item].\n  - Report an [APIError] on failure.\n\nExample:\n\n\t[golden.get] id: 1\n\t    [Item]",
+      "id": 1196762900,
+      "fields": [
+        {
+          "name": "id",
+          "documentation": "id identifies the item.\n\nUse the [ItemID] from [golden.update].",
+          "type": {
+            "kind": "named",
+            "name": "ItemID",
+            "optional": false
+          }
+        },
+        {
+          "name": "labels",
+          "documentation": "labels filters item labels.",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "primitive",
+              "name": "string",
+              "optional": false
+            },
+            "optional": true
+          }
+        },
+        {
+          "name": "token",
+          "documentation": "token carries an opaque token.",
+          "type": {
+            "kind": "primitive",
+            "name": "bytes",
+            "optional": true
+          }
+        }
+      ],
+      "response": {
+        "kind": "named",
+        "name": "Item",
+        "optional": true
+      },
+      "error": "APIError",
+      "public": false,
+      "permission": "item.read",
+      "http": [
+        {
+          "verb": "GET",
+          "path": "/items/{id}"
+        },
+        {
+          "verb": "POST",
+          "path": "/lookup"
+        }
+      ]
+    },
+    {
+      "name": "golden.listItems",
+      "documentation": "golden.listItems lists items up to the optional limit.",
+      "id": 3754638697,
+      "fields": [
+        {
+          "name": "limit",
+          "documentation": "limit caps the number of returned items.",
+          "type": {
+            "kind": "primitive",
+            "name": "u32",
+            "optional": true
+          }
+        }
+      ],
+      "response": {
+        "kind": "list",
+        "element": {
+          "kind": "named",
+          "name": "Item",
+          "optional": false
+        },
+        "optional": false
+      },
+      "error": "",
+      "public": true,
+      "permission": "",
+      "http": [
+        {
+          "verb": "GET",
+          "path": "/items"
+        }
+      ]
+    },
+    {
+      "name": "golden.open",
+      "documentation": "golden.open opens a raw stream.",
+      "id": 1419959416,
+      "fields": [
+        {
+          "name": "id",
+          "documentation": "id identifies the stream.",
+          "type": {
+            "kind": "named",
+            "name": "ItemID",
+            "optional": false
+          }
+        }
+      ],
+      "response": {
+        "kind": "primitive",
+        "name": "raw",
+        "optional": false
+      },
+      "error": "",
+      "public": true,
+      "permission": "",
+      "http": []
+    },
+    {
+      "name": "golden.ping",
+      "documentation": "golden.ping checks service health.",
+      "id": 1032431677,
+      "fields": [],
+      "response": {
+        "kind": "primitive",
+        "name": "void",
+        "optional": false
+      },
+      "error": "",
+      "public": true,
+      "permission": "",
+      "http": [
+        {
+          "verb": "GET",
+          "path": "/healthz"
+        }
+      ]
+    },
+    {
+      "name": "golden.update",
+      "documentation": "golden.update updates an item.",
+      "id": 3118051452,
+      "fields": [
+        {
+          "name": "id",
+          "documentation": "id identifies the item.",
+          "type": {
+            "kind": "named",
+            "name": "ItemID",
+            "optional": false
+          }
+        },
+        {
+          "name": "item",
+          "documentation": "item contains the replacement item.",
+          "type": {
+            "kind": "named",
+            "name": "Item",
+            "optional": false
+          }
+        }
+      ],
+      "response": {
+        "kind": "primitive",
+        "name": "void",
+        "optional": false
+      },
+      "error": "",
+      "public": true,
+      "permission": "",
+      "http": [
+        {
+          "verb": "PUT",
+          "path": "/items/{id}"
+        }
+      ]
+    }
+  ]
+}

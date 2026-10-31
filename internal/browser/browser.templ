@@ -1,0 +1,640 @@
+// © 2026 Ilya Mateyko. All rights reserved.
+// Use of this source code is governed by the ISC
+// license that can be found in the LICENSE.md file.
+
+package browser
+
+import (
+	"strconv"
+
+	"go.astrophena.name/base/web"
+	"go.astrophena.name/plug"
+)
+
+templ layout(page page) {
+	<!DOCTYPE html>
+	<html lang="en" class="no-js">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ page.title }</title>
+			<link rel="icon" type="image/svg+xml" href={ "/" + web.StaticHashName(ctx, "static/icons/plug.svg") }/>
+			<link rel="alternate" type="text/markdown" title="Complete API reference" href={ page.markdownURL() }/>
+			<link rel="stylesheet" href={ "/" + web.StaticHashName(ctx, "static/css/plug-schema.css") }/>
+			<script src={ "/" + web.StaticHashName(ctx, "static/js/plug-schema.js") } defer></script>
+		</head>
+		<body>
+			<main>
+				<div class="service-bar">
+					<a class="service-title" href={ page.homeURL() }>
+						@logo()
+						{ page.browser.serviceName() }
+					</a>
+					<nav class="section-nav" aria-label="API documentation">
+						<a href={ page.methodsURL() }>Methods</a>
+						<a href={ page.typesURL() }>Types</a>
+						if page.browser.httpRoutes > 0 {
+							<a href={ page.httpURL() }>HTTP</a>
+						}
+						<a href={ page.schemaURL() }>Schema</a>
+						<a href={ page.markdownURL() } download={ page.browser.schema.Package + "-api.md" }>Download Markdown</a>
+					</nav>
+				</div>
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
+
+templ indexPage(page page) {
+	@layout(page) {
+		<section class="hero">
+			<h1>{ page.browser.serviceName() } API</h1>
+			if page.browser.schema.Documentation != "" {
+				<div class="lead">
+					@docComment(page, page.browser.schema.Documentation)
+				</div>
+			} else {
+				<p class="lead">Methods and types provided by this service.</p>
+			}
+			<div class="stats">
+				<span class="badge">Package { page.browser.schema.Package }</span>
+				<span class="badge">Plug version { strconv.Itoa(int(page.browser.schema.Major)) }</span>
+				<span class="badge">{ strconv.Itoa(len(page.browser.methods)) } methods</span>
+				<span class="badge">{ strconv.Itoa(len(page.browser.types)) } types</span>
+				if page.browser.httpRoutes > 0 {
+					<span class="badge">{ strconv.Itoa(page.browser.httpRoutes) } HTTP routes</span>
+				}
+			</div>
+		</section>
+		<details class="reference-details">
+			<summary>Schema notation</summary>
+			<dl class="syntax-list">
+				<div><dt><code>name: T</code></dt><dd>A required field.</dd></div>
+				<div><dt><code>T?</code></dt><dd>An optional value. <code>list&lt;T&gt;</code> is a list.</dd></div>
+				<div><dt><code>-&gt; T</code></dt><dd>The result. <code>void</code> has no value.</dd></div>
+				<div><dt><code>throws E</code></dt><dd>A declared application error.</dd></div>
+				<div><dt><code>requires p</code></dt><dd>The required permission. <code>public</code> requires none.</dd></div>
+				<div><dt><code>http VERB "/path"</code></dt><dd>An HTTP route for the method.</dd></div>
+			</dl>
+			<p><a href={ page.protocolURL() }>Protocol overview</a></p>
+		</details>
+		<div class="browser-filter">
+			<label for="browser-filter">Search</label>
+			if page.browser.httpRoutes > 0 {
+				<input type="search" id="browser-filter" data-browser-filter aria-controls="methods types browser-no-results" autocomplete="off" placeholder="Method, type, or HTTP path"/>
+			} else {
+				<input type="search" id="browser-filter" data-browser-filter aria-controls="methods types browser-no-results" autocomplete="off" placeholder="Method or type name"/>
+			}
+			<p id="browser-no-results" class="no-results" data-no-results aria-live="polite" hidden>No results found.</p>
+		</div>
+		<section id="methods" data-filter-section>
+			<h2>Methods</h2>
+			if len(page.browser.methodCategories) == 0 {
+				@methodGrid(page, page.browser.methods)
+			} else {
+				if len(page.browser.otherMethods) > 0 {
+					@methodGroup(page, "Other methods", "", page.browser.otherMethods)
+				}
+				for _, category := range page.browser.methodCategories {
+					@methodGroup(page, category.Name, category.Documentation, category.Methods)
+				}
+			}
+		</section>
+		<section id="types" data-filter-section>
+			<h2>Types</h2>
+			if len(page.browser.typeCategories) == 0 {
+				@typeGrid(page, page.browser.types)
+			} else {
+				if len(page.browser.otherTypes) > 0 {
+					@typeGroup(page, "Other types", "", page.browser.otherTypes)
+				}
+				for _, category := range page.browser.typeCategories {
+					@typeGroup(page, category.Name, category.Documentation, category.Types)
+				}
+			}
+		</section>
+		if len(page.browser.schema.Permissions) > 0 {
+			<section>
+				<h2>Permissions</h2>
+				<p>Methods can require these permissions. The deployment handles authentication.</p>
+				<ul class="permission-list">
+					for _, permission := range page.browser.schema.Permissions {
+						<li>
+							<code>{ permission.Name }</code>
+							if permission.Documentation != "" {
+								<div class="muted">
+									@docComment(page, permission.Documentation)
+								</div>
+							}
+						</li>
+					}
+				</ul>
+			</section>
+		}
+		if page.browser.httpRoutes > 0 {
+			@httpGuide(page)
+		}
+		<section id="schema">
+			<h2>Schema</h2>
+			<details class="reference-details">
+				<summary>Wire identity</summary>
+				<dl class="identity-list">
+					<div><dt>Package</dt><dd><code>{ page.browser.schema.Package }</code></dd></div>
+					<div><dt>Major version</dt><dd><code>{ strconv.Itoa(int(page.browser.schema.Major)) }</code></dd></div>
+					<div><dt>Family</dt><dd><code>{ fingerprint(page.browser.schema.Family) }</code></dd></div>
+					<div><dt>Fingerprint</dt><dd><code>{ fingerprint(page.browser.schema.Fingerprint) }</code></dd></div>
+				</dl>
+				<p>Package and version define compatibility. The fingerprint identifies this schema. New declarations and optional tail fields are compatible. Other changes need a new version.</p>
+			</details>
+			@code(page, page.browser.schema.Source)
+		</section>
+	}
+}
+
+templ protocolPage(page page) {
+	@layout(page) {
+		<div class="eyebrow">Protocol</div>
+		<h1>Plug protocol</h1>
+		<p class="lead">Plug runs over an ordered byte stream.</p>
+		<figure class="protocol-map">
+			<pre><code>{ protocolMap }</code></pre>
+			<figcaption>Native and HTTP calls use the same handlers.</figcaption>
+		</figure>
+		<section>
+			<h2>Call flow</h2>
+			<ol class="protocol-steps">
+				<li>
+					<h3>Handshake</h3>
+					<p>The client sends <code>PLUG</code>, the wire version, and schema identity.</p>
+				</li>
+				<li>
+					<h3>Request</h3>
+					<p>A frame carries the request ID, method ID, and encoded fields.</p>
+				</li>
+				<li>
+					<h3>Dispatch</h3>
+					<p>The server decodes, authorizes, and invokes the handler.</p>
+				</li>
+				<li>
+					<h3>Result</h3>
+					<p>The server returns a response, declared error, or core error.</p>
+				</li>
+			</ol>
+		</section>
+		<section>
+			<h2>Inspect a server</h2>
+			<p>This script reads the schema from a Unix socket.</p>
+			<pre class="request-example"><code>{ protocolPython }</code></pre>
+			<p>The response contains the wire version, schema hashes, and source.</p>
+		</section>
+		<section>
+			<h2>Evolution</h2>
+			<p>Compatible schemas may add declarations, sum constructors, and optional tail fields. IDs stay stable, but the fingerprint changes.</p>
+		</section>
+		<section>
+			<h2>HTTP</h2>
+			<p>An <code>http</code> clause maps HTTP requests to a Plug method.</p>
+		</section>
+		<p><a href="https://github.com/astrophena/plug/tree/master/docs/protocol.md">Full protocol</a> · <a href={ page.homeURL() }>API</a></p>
+	}
+}
+
+templ methodGroup(page page, name string, documentation string, methods []method) {
+	<div class="schema-category" data-filter-group>
+		<h3>{ name }</h3>
+		if documentation != "" {
+			<div class="category-description">
+				@docComment(page, documentation)
+			</div>
+		}
+		@methodGrid(page, methods)
+	</div>
+}
+
+templ methodGrid(page page, methods []method) {
+	<div class="grid">
+		for _, method := range methods {
+			<article class="list-item" data-filter-item>
+				<div class="list-item-title">
+					<a href={ page.methodURL(method.Info.Name) }>{ method.Info.Name }</a>
+					<span class="kind">
+						if method.Info.Public {
+							public
+						} else {
+							requires { method.Info.Permission }
+						}
+					</span>
+				</div>
+				if method.Info.Documentation != "" {
+					@docComment(page, method.Info.Documentation)
+				}
+				if len(method.Info.HTTP) > 0 {
+					<ul class="method-routes" aria-label="HTTP routes">
+						for _, binding := range method.Info.HTTP {
+							<li><span class="verb">{ binding.Verb }</span><code>{ binding.Path }</code></li>
+						}
+					</ul>
+				}
+			</article>
+		}
+	</div>
+}
+
+templ typeGroup(page page, name string, documentation string, types []typeDoc) {
+	<div class="schema-category" data-filter-group>
+		<h3>{ name }</h3>
+		if documentation != "" {
+			<div class="category-description">
+				@docComment(page, documentation)
+			</div>
+		}
+		@typeGrid(page, types)
+	</div>
+}
+
+templ typeGrid(page page, types []typeDoc) {
+	<div class="grid">
+		for _, typ := range types {
+			<article class="list-item" data-filter-item>
+				<div class="list-item-title">
+					<a href={ page.typeURL(typ.Info.Name) }>{ typ.Info.Name }</a>
+					<span class="kind">{ typeKind(typ.Info) }</span>
+				</div>
+				if typ.Info.Documentation != "" {
+					@docComment(page, typ.Info.Documentation)
+				}
+			</article>
+		}
+	</div>
+}
+
+templ methodPage(page page, method method) {
+	@layout(page) {
+		<div class="eyebrow">Method</div>
+		<h1>{ method.Info.Name }</h1>
+		if method.Info.Documentation != "" {
+			<div class="lead">
+				@docComment(page, method.Info.Documentation)
+			</div>
+		}
+		<div class="meta">
+			<span>Method ID <code>{ hexID(method.Info.ID) }</code></span>
+			if method.Info.Public {
+				<span>Access <code>public</code></span>
+			} else {
+				<span>Permission <code>{ method.Info.Permission }</code></span>
+			}
+		</div>
+		if method.Info.Public {
+			<p class="muted"><code>public</code> requires no Plug permission. The deployment may still restrict access.</p>
+		}
+		<h2>Declaration</h2>
+		@code(page, methodDeclaration(method.Info))
+		if len(method.Info.Fields) > 0 {
+			<h2>Parameters</h2>
+			<table>
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>Type</th>
+						if hasDocs(method.Info.Fields) {
+							<th>Description</th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					for _, field := range method.Info.Fields {
+						<tr>
+							<td>
+								@fieldName(field)
+							</td>
+							<td>
+								@typeCode(page, typeSyntax(field.Type))
+							</td>
+							if hasDocs(method.Info.Fields) {
+								<td>
+									@docComment(page, field.Documentation)
+								</td>
+							}
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+		<h2>Result</h2>
+		<p>
+			@typeCode(page, typeSyntax(method.Info.Response))
+		</p>
+		if method.Info.Error != "" {
+			<h2>Declared errors</h2>
+			<p>
+				{ "Returns " }
+				@templ.Join(typeCode(page, method.Info.Error), templ.Raw("."))
+			</p>
+			<details class="reference-details">
+				<summary>{ strconv.Itoa(len(method.Errors)) } constructors with HTTP status</summary>
+				<table>
+					<thead><tr><th>Constructor</th><th>HTTP status</th><th>Description</th></tr></thead>
+					<tbody>
+						for _, constructor := range method.Errors {
+							<tr>
+								<td><code>{ constructor.Name }</code></td>
+								<td>
+									if constructor.HTTPStatus != 0 {
+										{ strconv.Itoa(constructor.HTTPStatus) }
+									} else {
+										<span class="muted">400 default</span>
+									}
+								</td>
+								<td>
+									@docComment(page, constructor.Documentation)
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</details>
+		}
+		if len(method.Info.HTTP) > 0 {
+			<h2>HTTP</h2>
+			<p>These routes call the same method and return JSON.</p>
+			for _, example := range page.browser.httpExamples(method.Info, page.origin) {
+				<article class="http-example">
+					<div class="route"><span class="verb">{ example.Binding.Verb }</span><code>{ example.Binding.Path }</code></div>
+					if len(example.Fields) == 0 {
+						<p class="muted">No request parameters.</p>
+					} else {
+						<h3>Request mapping</h3>
+						<table class="http-mapping">
+							<thead><tr><th>Field</th><th>Source</th><th>Representation</th></tr></thead>
+							<tbody>
+								for _, field := range example.Fields {
+									<tr>
+										<td>
+											@fieldName(field.Info)
+										</td>
+										<td>{ field.Location }</td>
+										<td>{ field.Representation }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					}
+					<h3>Example request</h3>
+					<pre class="request-example"><code>{ example.Curl }</code></pre>
+					if example.OptionalFieldsOmitted {
+						<p class="muted">Optional fields are omitted.</p>
+					}
+					<h3>Response</h3>
+					if example.Void {
+						<p>Success returns <code>HTTP 204 No Content</code>.</p>
+					} else {
+						<p>Success normally returns <code>HTTP 200</code> with JSON.</p>
+						<details class="reference-details">
+							<summary>Example JSON response</summary>
+							<pre class="json-example"><code>{ example.JSON }</code></pre>
+						</details>
+					}
+					<details class="try-request">
+						<summary>Try request</summary>
+						<p class="muted">Uses the current session.</p>
+						<form data-http-example data-method={ example.Binding.Verb }>
+							<label>
+								Request URL
+								<input name="url" type="text" value={ example.URL } required/>
+							</label>
+							if example.Body != "" {
+								<label>
+									JSON body
+									<textarea name="body" rows="8">{ example.Body }</textarea>
+								</label>
+							}
+							<button type="submit">Send request</button>
+							<pre class="try-response" data-response aria-live="polite" hidden></pre>
+						</form>
+					</details>
+				</article>
+			}
+			if method.Info.Error != "" {
+				<h3>Error envelope</h3>
+				<p><code>code</code> names the constructor. <code>details</code> contains the error value.</p>
+				<pre class="json-example"><code>{ page.browser.exampleErrorJSON(method.Info.Error) }</code></pre>
+			}
+		}
+	}
+}
+
+templ typePage(page page, typ typeDoc) {
+	@layout(page) {
+		<div class="eyebrow">{ typeKind(typ.Info) }</div>
+		<h1>{ typ.Info.Name }</h1>
+		if typ.Info.Documentation != "" {
+			<div class="lead">
+				@docComment(page, typ.Info.Documentation)
+			</div>
+		}
+		<h2>Declaration</h2>
+		for _, declaration := range typeDeclarations(typ.Info) {
+			<article class="definition">
+				if declaration.Documentation != "" && declaration.Documentation != typ.Info.Documentation {
+					@docComment(page, declaration.Documentation)
+				}
+				if declaration.ID != 0 {
+					<div class="meta">
+						<span>Constructor ID <code>{ hexID(declaration.ID) }</code></span>
+						if declaration.HTTPStatus != 0 {
+							<span>HTTP status <code>{ strconv.Itoa(declaration.HTTPStatus) }</code></span>
+						}
+					</div>
+				}
+				@code(page, declaration.Source)
+				if len(declaration.Fields) > 0 {
+					<table>
+						<thead>
+							<tr>
+								<th>Field</th>
+								<th>Type</th>
+								if hasDocs(declaration.Fields) {
+									<th>Description</th>
+								}
+							</tr>
+						</thead>
+						<tbody>
+							for _, field := range declaration.Fields {
+								<tr>
+									<td>
+										@fieldName(field)
+									</td>
+									<td>
+										@typeCode(page, typeSyntax(field.Type))
+									</td>
+									if hasDocs(declaration.Fields) {
+										<td>
+											@docComment(page, field.Documentation)
+										</td>
+									}
+								</tr>
+							}
+						</tbody>
+					</table>
+				}
+			</article>
+		}
+		if page.browser.httpRoutes > 0 {
+			<section class="json-representation">
+				<h2>JSON</h2>
+				if typ.Info.Error {
+					<p>Error values appear in <code>details</code>.</p>
+				} else if typ.Info.Kind == plug.TypeSum {
+					<p>The <code>type</code> field contains the constructor name.</p>
+				} else if typ.Info.Kind == plug.TypeNewtype {
+					<p>Newtypes use their underlying scalar.</p>
+				} else {
+					<p>Records use schema field names as JSON keys.</p>
+				}
+				<pre class="json-example"><code>{ page.browser.exampleTypeJSON(typ.Info) }</code></pre>
+			</section>
+		}
+		if len(typ.Requests) > 0 || len(typ.Responses) > 0 || len(typ.Failures) > 0 || len(typ.Types) > 0 {
+			<h2>Used by</h2>
+			<div class="callouts">
+				if len(typ.Requests) > 0 {
+					@methodLinks(page, "Request parameter", typ.Requests)
+				}
+				if len(typ.Responses) > 0 {
+					@methodLinks(page, "Returned by", typ.Responses)
+				}
+				if len(typ.Failures) > 0 {
+					@methodLinks(page, "Thrown by", typ.Failures)
+				}
+				if len(typ.Types) > 0 {
+					<div class="callout">
+						<h3>Referenced by types</h3>
+						<ul>
+							for _, typ := range typ.Types {
+								<li><a href={ page.typeURL(typ.Name) }><code>{ typ.Name }</code></a></li>
+							}
+						</ul>
+					</div>
+				}
+			</div>
+		}
+	}
+}
+
+templ httpGuide(page page) {
+	<section id="http">
+		<h2>HTTP</h2>
+		<p>HTTP routes use the same handlers as native calls.</p>
+		<div class="guide-grid">
+			<article class="guide-card">
+				<h3>Requests</h3>
+				<p><code>GET</code> and <code>DELETE</code> use path and query values. Other verbs also accept JSON. Path and query values take precedence.</p>
+			</article>
+			<article class="guide-card">
+				<h3>Query encoding</h3>
+				<p>Repeat a parameter for lists. Bytes use base64. Omit optional values.</p>
+			</article>
+			<article class="guide-card">
+				<h3>JSON values</h3>
+				<p>Records use field names. Sums store the constructor in <code>"type"</code>, including variants without fields. Integers are numbers; JavaScript may lose precision for large 64-bit values.</p>
+				<p>Empty lists use <code>[]</code> and empty bytes use <code>""</code>. Absent optional fields are omitted; input also accepts <code>null</code>.</p>
+			</article>
+			<article class="guide-card">
+				<h3>Responses</h3>
+				<p>Results use JSON. <code>void</code> returns <code>204 No Content</code>.</p>
+			</article>
+			<article class="guide-card">
+				<h3>Access</h3>
+				<p>Plug permissions apply. The deployment handles authentication.</p>
+			</article>
+			<article class="guide-card">
+				<h3>Errors</h3>
+				<p>Errors contain <code>code</code> and <code>message</code>. Declared errors also contain <code>details</code>.</p>
+			</article>
+		</div>
+		<h3>HTTP errors</h3>
+		<table>
+			<thead><tr><th>Code</th><th>Status</th><th>Meaning</th></tr></thead>
+			<tbody>
+				<tr><td><code>bad_request</code></td><td>400</td><td>The request does not match the Plug type.</td></tr>
+				<tr><td><code>unauthenticated</code></td><td>401</td><td>No principal is available.</td></tr>
+				<tr><td><code>permission_denied</code></td><td>403</td><td>The principal lacks the permission.</td></tr>
+				<tr><td><code>unimplemented</code></td><td>501</td><td>No handler is registered.</td></tr>
+				<tr><td><code>internal</code></td><td>500</td><td>The server failed without a declared error.</td></tr>
+			</tbody>
+		</table>
+		<pre class="json-example"><code>{ "{\n  \"code\": \"bad_request\",\n  \"message\": \"field limit: parse integer\"\n}" }</code></pre>
+	</section>
+}
+
+templ docComment(page page, text string) {
+	if text != "" {
+		<div class="documentation">
+			@templ.Raw(page.docHTML(text))
+		</div>
+	}
+}
+
+templ logo() {
+	<svg class="plug-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true" focusable="false">
+		<g fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+			<path d="M24 148c0-31 25-55 56-55s56 24 56 55v18c0 31-25 55-56 55s-56-24-56-55Z"></path>
+			<path d="M24 148c0 31 25 55 56 55s56-24 56-55"></path>
+			<path d="M59 96c0-13 9-23 21-23s21 10 21 23"></path>
+			<rect x="91" y="58" width="40" height="22" rx="11" transform="rotate(-34 111 69)"></rect>
+			<rect x="125" y="49" width="40" height="22" rx="11" transform="rotate(11 145 60)"></rect>
+			<rect x="158" y="64" width="40" height="22" rx="11" transform="rotate(42 178 75)"></rect>
+			<circle cx="207" cy="108" r="19"></circle>
+		</g>
+	</svg>
+}
+
+templ fieldName(field plug.FieldInfo) {
+	<code>{ field.Name }</code>
+	if field.Type.Optional {
+		<span class="field-presence optional">Optional</span>
+	} else {
+		<span class="field-presence required">Required</span>
+	}
+}
+
+templ methodLinks(page page, title string, methods []plug.MethodInfo) {
+	<div class="callout">
+		<h3>{ title }</h3>
+		<ul>
+			for _, method := range methods {
+				<li><a href={ page.methodURL(method.Name) }><code>{ method.Name }</code></a></li>
+			}
+		</ul>
+	</div>
+}
+
+templ code(page page, source string) {
+	<div class="schema-code">
+		for _, line := range page.lines(source) {
+			<span class="schema-line">
+				@tokens(line.Tokens)
+			</span>
+		}
+	</div>
+}
+
+templ typeCode(page page, expression string) {
+	<code>
+		@tokens(page.tokens(expression))
+	</code>
+}
+
+templ tokens(tokens []token) {
+	for _, token := range tokens {
+		if token.Href != "" {
+			<a class={ token.Class } href={ token.Href }>{ token.Text }</a>
+		} else if token.Class != "" {
+			<span class={ token.Class }>{ token.Text }</span>
+		} else {
+			{ token.Text }
+		}
+	}
+}

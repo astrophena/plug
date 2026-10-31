@@ -1,0 +1,25 @@
+-- comment.txt --
+Users are represented by [User] and [value]. See [users.get], [users.Get],
+[Users.get], and [Users.Get]. Unknown references such as [Missing],
+[users.Missing], [io.Reader], and [example.com/pkg.Name] stay literal.
+
+# Examples
+
+  - Read a [User] with [users.get].
+    Continue with another sentence.
+  - Keep [Missing] as written.
+
+Numbered steps:
+
+  1. Find a [User].
+  2. Call [Users.Get].
+
+Preformatted text keeps references and indentation:
+
+    [users.get] id: 1
+        [User]
+
+Raw HTML is text: <script>alert("hello")</script>.
+See [the guide] or https://example.com/guide.
+
+[the guide]: https://example.com/guide?q=one&other=two

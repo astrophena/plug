@@ -1,0 +1,12 @@
+// Query once, then work with the snapshot.
+let users = greeter.listUsers(limit: 2)
+users | filter(u => u.email != nil) | map(u => u.name)
+let refresh = () => greeter.getUser(id: 0x2a)
+refresh()
+/* JSON keeps null. */
+toJSON({missing: nil, ready: true, old: null, text: "hello\nworld"})
+{text: "body"}.text
+[0b10, 0o77, 1_000, 1.5e-2, .5, 0x1.fp+2]
+let привет = false || true && 1 <= 2
+let twice = (a, b) => [a + b, a - b, a * b, a / b, a % b]
+!false == (3 >= 2)

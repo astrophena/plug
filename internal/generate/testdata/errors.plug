@@ -1,0 +1,50 @@
+// errors exercises generated error fields.
+package errors version 1
+
+// Text contains an error message.
+type Text = string
+
+// problem reports an error with fields that also name error metadata.
+problem
+  // status contains the application status.
+  status: string
+  // name identifies the failed operation.
+  name: i32
+  // code marks an application failure.
+  code: bool
+  // details lists reasons for failure.
+  details: list<string>
+  // stack contains application data.
+  stack: bytes
+  // cause describes the application failure.
+  cause: string
+  // constructor identifies the application object.
+  constructor: string
+  // message contains an application code.
+  message: i32
+  // toString contains application text.
+  toString: string
+  // valueOf contains the application value.
+  valueOf: i32
+= Problem httpStatus 400
+
+// optional reports an error with an optional message.
+optional
+  // message describes the application failure.
+  message: string?
+= OptionalError httpStatus 400
+
+// text reports an error with a string message.
+text
+  // message describes the application failure.
+  message: Text
+  // value identifies the failed value.
+  value: string
+= TextError httpStatus 400
+
+// errors.fail returns an error with application metadata.
+errors.fail -> void throws Problem public http GET "/fail"
+// errors.optional returns an error with an optional message.
+errors.optional -> void throws OptionalError public http GET "/optional"
+// errors.explain returns an error with a string message.
+errors.explain -> void throws TextError public http GET "/text"

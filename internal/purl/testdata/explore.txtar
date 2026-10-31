@@ -1,0 +1,24 @@
+Explore a service and retain intermediate values.
+-- lookup.purl --
+let user = greeter.getUser(id: 42)
+user
+user.name
+user.role
+-- pipeline.purl --
+greeter.listUsers(limit: 2) | map(u => u.name)
+let names = _
+names | sortBy(name => name) | take(1)
+-- error.purl --
+greeter.getUser(id: 0)
+-- previous.purl --
+names
+-- values.purl --
+parseJSON("{\"id\":18446744073709551615,\"labels\":[\"a\",\"b\"]}").id
+bytes("hello") | text()
+-- documentation.purl --
+greeter.getUser
+let lookup = greeter.getUser
+lookup(id: 1).name
+-- nil.purl --
+[nil, null, parseJSON("null")]
+toJSON([nil])

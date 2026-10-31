@@ -1,0 +1,5 @@
+-- comment.txt --
+See [User] and [users.get].
+
+[User]: https://example.com/user
+[users.get]: https://example.com/get

@@ -1,0 +1,14 @@
+-- normalized --
+See [User] and [users.get].
+
+[User]: https://example.com/user
+[users.get]: https://example.com/get
+-- generated comment --
+See [User] and [users.get].
+
+[User]: https://example.com/user
+[users.get]: https://example.com/get
+-- HTML --
+<p>See <a href="https://example.com/user">User</a> and <a href="https://example.com/get">users.get</a>.
+-- Markdown --
+See [User](https://example.com/user) and [users.get](https://example.com/get).

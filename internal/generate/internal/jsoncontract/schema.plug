@@ -1,0 +1,90 @@
+// jsoncontract describes JSON contract tests.
+package jsoncontract version 1
+
+// ID identifies a value.
+type ID = u64
+
+// Path is a slash-separated path.
+type Path = string
+
+// Choice represents a choice.
+type Choice
+
+// empty represents an empty choice.
+empty = Choice
+
+// value represents a choice with a payload.
+value
+  // label contains a label.
+  label: string
+  // blob contains binary data.
+  blob: bytes
+  // tags contains labels.
+  tags: list<string>
+  // flag optionally enables the choice.
+  flag: bool?
+= Choice
+
+// record represents a record with collections and integers.
+record
+  // choices contains nested choices.
+  choices: list<list<Choice>>
+  // numbers contains nested numbers.
+  numbers: list<list<u32>>
+  // data contains binary data.
+  data: bytes
+  // signed contains a signed integer.
+  signed: i64
+  // unsigned contains an unsigned integer.
+  unsigned: u64
+  // note optionally contains a note.
+  note: string?
+= Record
+
+// oops indicates a failed operation.
+oops = Problem httpStatus 400
+
+// jsoncontract.echo echoes a record.
+jsoncontract.echo
+  // record contains the record.
+  record: Record
+-> Record throws Problem public http POST "/echo"
+
+// jsoncontract.getChoice returns a choice.
+jsoncontract.getChoice -> Choice public http GET "/choice"
+
+// jsoncontract.getOptional returns an optional choice.
+jsoncontract.getOptional -> Choice? public http GET "/optional"
+
+// jsoncontract.listChoices lists optional nested choices.
+jsoncontract.listChoices -> list<list<Choice>>? public http GET "/choices"
+
+// jsoncontract.getBytes returns binary data.
+jsoncontract.getBytes -> bytes public http GET "/bytes"
+
+// jsoncontract.listEmpty lists choices.
+jsoncontract.listEmpty -> list<Choice> public http GET "/empty"
+
+// jsoncontract.query sends query lists.
+jsoncontract.query
+  // required contains required labels.
+  required: list<string>
+  // labels contains optional labels.
+  labels: list<string>?
+  // numbers contains optional numbers.
+  numbers: list<u32>?
+  // blobs contains optional binary values.
+  blobs: list<bytes>?
+  // ids contains optional identifiers.
+  ids: list<ID>?
+-> void public http GET "/query"
+
+// jsoncontract.browse projects a repository and optional path.
+jsoncontract.browse
+  // repository names a repository, including any namespace slashes.
+  repository: string
+  // path selects a path, defaulting to the root.
+  path: Path?
+  // rev selects a revision.
+  rev: string?
+-> void public http GET "/repos/{repository}/contents/{path...}"

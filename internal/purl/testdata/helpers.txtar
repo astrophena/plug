@@ -1,0 +1,26 @@
+Small helpers for queries and reports.
+-- queries.purl --
+let users = greeter.listUsers(limit: 2)
+users | find(u => contains(u.name, "ob")) | (u => u.name)
+users | any(u => startsWith(u.name, "Al"))
+users | all(u => endsWith(u.name, "e"))
+[] | find(x => missing())
+[] | any(x => missing())
+[] | all(x => missing())
+-- keys.purl --
+[3, 1, 3, 2, 1] | uniqueBy(x => x)
+[1, 1.0, 2] | groupBy(x => x) | map(g => {key: g.key, count: count(g.items)})
+["a", "b", "a"] | groupBy(x => x)
+[[1], [1], [2]] | uniqueBy(x => x)
+[] | groupBy(x => x)
+-- totals.purl --
+[18446744073709551615, 1] | sum
+[1, 2.5, 3] | sum
+[] | sum
+assert(true, "ready")
+-- guard.purl --
+assert(false, "Expected exactly one channel")
+greeter.ping()
+-- sorting.purl --
+[{name: "first", key: 2}, {name: "second", key: 1}, {name: "third", key: 2}] | sortBy(x => x.key) | map(x => x.name)
+[] | sortBy(x => missing())

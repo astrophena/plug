@@ -1,0 +1,48 @@
+-- copyright/exclusions.json --
+[
+  "example/greeter/greeter_plug.go",
+  "internal/browser/browser_templ.go",
+  "internal/generate/internal/**/client.go",
+  "internal/generate/testdata/*.go.golden"
+]
+-- copyright/template.templ --
+// © %d Ilya Mateyko. All rights reserved.
+// Use of this source code is governed by the ISC
+// license that can be found in the LICENSE.md file.
+
+-- copyright/header.templ --
+// ©
+-- copyright/template.go --
+// © %d Ilya Mateyko. All rights reserved.
+// Use of this source code is governed by the ISC
+// license that can be found in the LICENSE.md file.
+
+-- copyright/header.go --
+// ©
+-- pre-commit.json --
+[
+  {
+    "run": ["gofmt", "-d", "."]
+  },
+  {
+    "run": ["go", "tool", "staticcheck", "./..."]
+  },
+  {
+    "run": ["go", "run", "golang.org/x/vuln/cmd/govulncheck@latest", "./..."],
+    "only_in_ci": true
+  },
+  {
+    "run": ["go", "test", "./..."],
+    "skip_in_ci": true
+  },
+  {
+    "run": ["go", "test", "-race", "./..."],
+    "only_in_ci": true
+  },
+  {
+    "run": ["go", "mod", "tidy", "--diff"]
+  },
+  {
+    "run": ["go", "tool", "addcopyright", "-check"]
+  }
+]

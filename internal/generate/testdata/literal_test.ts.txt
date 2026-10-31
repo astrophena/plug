@@ -1,0 +1,15 @@
+import { Client } from "./client.ts";
+
+Deno.test("schema text stays literal", async () => {
+  let url = "";
+  const client = new Client("https://example.test", {
+    fetch: (input) => {
+      url = String(input);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    },
+  });
+  await client.get({ id: "a/b" });
+  const want = "https://example.test/`+(globalThis.literalExecuted=true)+`/${text}/\\/a%2Fb";
+  if (url !== want) throw new Error(`URL: ${url}; want ${want}`);
+  if ("literalExecuted" in globalThis) throw new Error("path executed");
+});
