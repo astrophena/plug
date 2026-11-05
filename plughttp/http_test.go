@@ -130,28 +130,19 @@ func TestHTTPRoutes(t *testing.T) {
 			if response.Code != tc.status || !strings.Contains(response.Body.String(), tc.contains) {
 				t.Fatalf("response = %d %s", response.Code, response.Body.String())
 			}
-		})
-	}
-}
+			if tc.status != http.StatusOK {
+				return
+			}
 
-func TestHTTPJSONRoundTrip(t *testing.T) {
-	server := newGreeterServer(t)
-	handler, err := plughttp.New(server, greeter.HTTPRoutes(server), plughttp.Options{
-		Authenticate: principal("allowed"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodGet, "/v1/users/42", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	var user greeter.User
-	if err := user.UnmarshalJSON(response.Body.Bytes()); err != nil {
-		t.Fatal(err)
-	}
-	role, ok := user.Role.(*greeter.Admin)
-	if user.ID != 42 || !ok || role.Level != 7 {
-		t.Fatalf("user = %#v", user)
+			var user greeter.User
+			if err := user.UnmarshalJSON(response.Body.Bytes()); err != nil {
+				t.Fatal(err)
+			}
+			role, ok := user.Role.(*greeter.Admin)
+			if user.ID != 42 || !ok || role.Level != 7 {
+				t.Fatalf("user = %#v", user)
+			}
+		})
 	}
 }
 
@@ -271,45 +262,6 @@ func TestHTTPEmptyList(t *testing.T) {
 }
 
 func TestHTTPBodyLimit(t *testing.T) {
-	s := newGreeterServer(t)
-	routes := greeter.HTTPRoutes(s)
-	cases := map[string]struct {
-		limit  int64
-		status int
-	}{
-		"default": {
-			status: http.StatusOK,
-		},
-		"at limit": {
-			limit:  9,
-			status: http.StatusOK,
-		},
-		"over limit": {
-			limit:  8,
-			status: http.StatusBadRequest,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			h, err := plughttp.New(s, routes, plughttp.Options{
-				Authenticate: principal("allowed"),
-				MaxBodyBytes: tc.limit,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			r := httptest.NewRequest(http.MethodPost, "/v1/get-user", strings.NewReader(`{"id":42}`))
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, r)
-			if w.Code != tc.status {
-				t.Fatalf("response = %d %s, want %d", w.Code, w.Body.String(), tc.status)
-			}
-		})
-	}
-}
-
-func TestHTTPBodyLimitOverride(t *testing.T) {
 	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
 		Limits: plug.Limits{
 			MaxFrameSize: 64,
@@ -333,24 +285,48 @@ func TestHTTPBodyLimitOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	routes := greeter.HTTPRoutes(s)
-	body := strings.Repeat(" ", 64) + `{"id":42}`
-	for name, limit := range map[string]int64{"default": 0, "larger than frame limit": int64(len(body))} {
+
+	const body = `{"id":42}`
+	padded := strings.Repeat(" ", 64) + body
+	cases := map[string]struct {
+		body   string
+		limit  int64
+		status int
+	}{
+		"at limit": {
+			body:   body,
+			limit:  int64(len(body)),
+			status: http.StatusOK,
+		},
+		"over limit": {
+			body:   body,
+			limit:  int64(len(body) - 1),
+			status: http.StatusBadRequest,
+		},
+		"default frame limit": {
+			body:   padded,
+			status: http.StatusBadRequest,
+		},
+		"larger than frame limit": {
+			body:   padded,
+			limit:  int64(len(padded)),
+			status: http.StatusOK,
+		},
+	}
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, err := plughttp.New(s, routes, plughttp.Options{
 				Authenticate: principal("allowed"),
-				MaxBodyBytes: limit,
+				MaxBodyBytes: tc.limit,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/get-user", strings.NewReader(body)))
-			want := http.StatusOK
-			if limit == 0 {
-				want = http.StatusBadRequest
-			}
-			if w.Code != want {
-				t.Fatalf("response = %d %s; want %d", w.Code, w.Body.String(), want)
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/get-user", strings.NewReader(tc.body)))
+			if w.Code != tc.status {
+				t.Fatalf("response = %d %s; want %d", w.Code, w.Body.String(), tc.status)
 			}
 		})
 	}

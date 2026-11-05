@@ -3,11 +3,6 @@
 // license that can be found in the LICENSE.md file.
 
 // Package plughttp serves Plug methods and schema documentation over HTTP.
-//
-// New serves generated HTTP routes through the server's Plug handlers.
-//
-// NewBrowser serves HTML reference pages and a Markdown download at /index.md.
-// Mount it with http.StripPrefix and configure web.Server.StaticFS with StaticFS.
 package plughttp
 
 import (
@@ -20,6 +15,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -146,14 +142,7 @@ func New(server *plug.Server, routes []Route, opts Options) (http.Handler, error
 			return nil, fmt.Errorf("plughttp: route method %q is absent from schema", route.method.Name)
 		}
 
-		declared := false
-		for _, binding := range known.HTTP {
-			if binding.Verb == route.binding.Verb && binding.Path == route.binding.Path {
-				declared = true
-				break
-			}
-		}
-		if !declared {
+		if !slices.Contains(known.HTTP, route.binding) {
 			return nil, fmt.Errorf("plughttp: route %s %s is not declared by method %s", route.binding.Verb, route.binding.Path, known.Name)
 		}
 
@@ -307,7 +296,6 @@ func validateJSONValue(schema *plug.Schema, expr plug.TypeExpr, raw jsontext.Val
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return err
 	}
-	var fields []plug.FieldInfo
 	if typ.Kind == plug.TypeSum {
 		var constructorName string
 		if tag, ok := values["type"]; ok {
@@ -318,26 +306,28 @@ func validateJSONValue(schema *plug.Schema, expr plug.TypeExpr, raw jsontext.Val
 		if constructorName == "" {
 			return fmt.Errorf("%s constructor type is required", typ.Name)
 		}
-		matched := false
 		for _, constructor := range typ.Constructors {
 			if constructor.Name == constructorName {
-				fields = constructor.Fields
-				matched = true
-				break
+				return validateJSONFields(schema, constructor.Fields, values, true)
 			}
 		}
-		if !matched {
-			return fmt.Errorf("unknown %s constructor %q", typ.Name, constructorName)
-		}
-	} else if len(typ.Constructors) == 1 {
-		fields = typ.Constructors[0].Fields
+		return fmt.Errorf("unknown %s constructor %q", typ.Name, constructorName)
 	}
 
-	return validateJSONFields(schema, fields, values, typ.Kind == plug.TypeSum)
+	var fields []plug.FieldInfo
+	if len(typ.Constructors) == 1 {
+		fields = typ.Constructors[0].Fields
+	}
+	return validateJSONFields(schema, fields, values, false)
 }
 
 func validateJSONFields(schema *plug.Schema, fields []plug.FieldInfo, values map[string]jsontext.Value, sum bool) error {
+	known := make(map[string]bool, len(fields)+1)
+	if sum {
+		known["type"] = true
+	}
 	for _, field := range fields {
+		known[field.Name] = true
 		value, present := values[field.Name]
 		if !present {
 			if field.Type.Optional {
@@ -350,13 +340,6 @@ func validateJSONFields(schema *plug.Schema, fields []plug.FieldInfo, values map
 		}
 	}
 
-	known := make(map[string]bool, len(fields)+1)
-	if sum {
-		known["type"] = true
-	}
-	for _, field := range fields {
-		known[field.Name] = true
-	}
 	for name := range values {
 		if !known[name] {
 			return fmt.Errorf("unknown field %q", name)
