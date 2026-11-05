@@ -21,12 +21,12 @@ func formatSchema(schema *Schema) string {
 func (v *schemaView) format() string {
 	var buf bytes.Buffer
 	writeDoc(&buf, "", v.schema.documentation)
-	writef(&buf, "package %s version %d\n", v.schema.packageName, v.schema.major)
+	fmt.Fprintf(&buf, "package %s version %d\n", v.schema.packageName, v.schema.major)
 
 	for _, perm := range v.permissions {
 		buf.WriteByte('\n')
 		writeDoc(&buf, "", perm.documentation)
-		writef(&buf, "permission %s\n", perm.name)
+		fmt.Fprintf(&buf, "permission %s\n", perm.name)
 	}
 
 	var (
@@ -45,13 +45,13 @@ func (v *schemaView) format() string {
 		value := v.newtypeByName[name]
 		buf.WriteByte('\n')
 		writeDoc(&buf, "", value.documentation)
-		writef(&buf, "type %s = %s\n", value.name, value.base)
+		fmt.Fprintf(&buf, "type %s = %s\n", value.name, value.base)
 	}
 	writeConstructorGroup := func(name string) {
 		if dt, ok := v.declaredTypes[name]; ok {
 			buf.WriteByte('\n')
 			writeDoc(&buf, "", dt.documentation)
-			writef(&buf, "type %s\n", dt.name)
+			fmt.Fprintf(&buf, "type %s\n", dt.name)
 		}
 		for _, constructor := range v.groups[name] {
 			buf.WriteByte('\n')
@@ -87,7 +87,7 @@ func (v *schemaView) format() string {
 	for _, category := range v.categories {
 		buf.WriteByte('\n')
 		writeDoc(&buf, "", category.documentation)
-		writef(&buf, "category %s\n", strconv.Quote(category.name))
+		fmt.Fprintf(&buf, "category %s\n", strconv.Quote(category.name))
 		for _, name := range category.types {
 			if _, ok := v.newtypeByName[name]; ok {
 				writeNewtype(name)
@@ -122,7 +122,7 @@ func writeMethodDeclaration(buf *bytes.Buffer, method method) {
 	writeDeclaration(buf, method.name, method.fields, tail)
 	if len(clauses) > 1 {
 		for _, clause := range clauses {
-			writef(buf, "  %s\n", clause)
+			fmt.Fprintf(buf, "  %s\n", clause)
 		}
 	}
 }
@@ -147,20 +147,20 @@ func writeDeclaration(buf *bytes.Buffer, name string, fields []field, tail strin
 		}
 	}
 	if !hasFieldDocs {
-		writef(buf, "%s", name)
+		fmt.Fprintf(buf, "%s", name)
 		for _, field := range fields {
-			writef(buf, " %s: %s", field.name, field.typ.String())
+			fmt.Fprintf(buf, " %s: %s", field.name, field.typ.String())
 		}
-		writef(buf, " %s\n", tail)
+		fmt.Fprintf(buf, " %s\n", tail)
 		return
 	}
 
-	writef(buf, "%s\n", name)
+	fmt.Fprintf(buf, "%s\n", name)
 	for _, field := range fields {
 		writeDoc(buf, "  ", field.documentation)
-		writef(buf, "  %s: %s\n", field.name, field.typ.String())
+		fmt.Fprintf(buf, "  %s: %s\n", field.name, field.typ.String())
 	}
-	writef(buf, "%s\n", tail)
+	fmt.Fprintf(buf, "%s\n", tail)
 }
 
 func writeDoc(buf *bytes.Buffer, indent, doc string) {
@@ -169,17 +169,13 @@ func writeDoc(buf *bytes.Buffer, indent, doc string) {
 	}
 	for line := range strings.SplitSeq(doc, "\n") {
 		if line == "" {
-			writef(buf, "%s//\n", indent)
+			fmt.Fprintf(buf, "%s//\n", indent)
 			continue
 		}
 		if strings.HasPrefix(line, "\t") {
-			writef(buf, "%s//%s\n", indent, line)
+			fmt.Fprintf(buf, "%s//%s\n", indent, line)
 			continue
 		}
-		writef(buf, "%s// %s\n", indent, line)
+		fmt.Fprintf(buf, "%s// %s\n", indent, line)
 	}
-}
-
-func writef(buf *bytes.Buffer, format string, values ...any) {
-	fmt.Fprintf(buf, format, values...)
 }

@@ -17,13 +17,7 @@ import (
 // validate checks schema semantics and generated Go-name safety.
 func validate(schema *Schema) error {
 	if !validIdentifier(schema.packageName) {
-		return &Error{
-			Position: Position{
-				Line:   1,
-				Column: 1,
-			},
-			Message: fmt.Sprintf("invalid package name %q", schema.packageName),
-		}
+		return diagnostic(Position{Line: 1, Column: 1}, "invalid package name %q", schema.packageName)
 	}
 
 	for _, category := range schema.categories {
@@ -48,8 +42,10 @@ func validate(schema *Schema) error {
 		}
 	}
 
-	types := make(map[string]Position)
-	goNames := make(map[string]Position)
+	var (
+		types   = make(map[string]Position)
+		goNames = make(map[string]Position)
+	)
 	for _, name := range []string{"Schema", "Client", "Handlers", "NewClient", "RegisterHandlers"} {
 		goNames[name] = Position{
 			Line:   1,
@@ -62,12 +58,14 @@ func validate(schema *Schema) error {
 			Column: 1,
 		}
 	}
-	constructors := make(map[string]Position)
-	methods := make(map[string]Position)
-	handlers := make(map[string]Position)
-	groups := make(map[string][]constructor)
-	httpPatterns := make(map[string]Position)
-	var mux http.ServeMux
+	var (
+		constructors = make(map[string]Position)
+		methods      = make(map[string]Position)
+		handlers     = make(map[string]Position)
+		groups       = make(map[string][]constructor)
+		httpPatterns = make(map[string]Position)
+		mux          http.ServeMux
+	)
 
 	for _, value := range schema.newtypes {
 		if err := checkName(value.name, value.position, "type"); err != nil {
@@ -239,7 +237,7 @@ func validate(schema *Schema) error {
 	}
 	for _, constructor := range schema.constructors {
 		for _, field := range constructor.fields {
-			if err := validateTypeRef(field.typ, field.position, false, false, known); err != nil {
+			if err := validateTypeRef(field.typ, field.position, false, known); err != nil {
 				return err
 			}
 		}
@@ -248,7 +246,7 @@ func validate(schema *Schema) error {
 	errorTypes := make(map[string]Position)
 	for _, method := range schema.methods {
 		for _, field := range method.fields {
-			if err := validateTypeRef(field.typ, field.position, false, false, known); err != nil {
+			if err := validateTypeRef(field.typ, field.position, false, known); err != nil {
 				return err
 			}
 		}
@@ -283,7 +281,7 @@ func validate(schema *Schema) error {
 				}
 			}
 		}
-		if err := validateTypeRef(method.response, method.position, true, true, known); err != nil {
+		if err := validateTypeRef(method.response, method.position, true, known); err != nil {
 			return err
 		}
 		if method.errorType != nil {
@@ -327,11 +325,7 @@ func validate(schema *Schema) error {
 		}
 	}
 
-	if err := rejectRecursiveTypes(groups); err != nil {
-		return err
-	}
-
-	return nil
+	return rejectRecursiveTypes(groups)
 }
 
 func httpTextType(ref typeRef, newtypes []newtype, allowList bool) bool {
@@ -359,6 +353,7 @@ func assignIDs(schema *Schema) error {
 		ids[id] = canonical
 		return id, nil
 	}
+
 	for i := range schema.constructors {
 		c := &schema.constructors[i]
 		id, err := assign(constructorText(schema.packageName, *c, false), c.position)
@@ -379,9 +374,11 @@ func assignIDs(schema *Schema) error {
 }
 
 func validateFields(fields []field) error {
-	fieldNames := make(map[string]Position)
-	goNames := make(map[string]Position)
-	optional := false
+	var (
+		fieldNames = make(map[string]Position)
+		goNames    = make(map[string]Position)
+		optional   bool
+	)
 	for _, field := range fields {
 		if err := checkName(field.name, field.position, "field"); err != nil {
 			return err
@@ -401,21 +398,18 @@ func validateFields(fields []field) error {
 	return nil
 }
 
-func validateTypeRef(ref typeRef, position Position, allowVoid, allowRaw bool, known func(string) bool) error {
+func validateTypeRef(ref typeRef, position Position, response bool, known func(string) bool) error {
 	if ref.element != nil {
 		if ref.element.optional {
 			return diagnostic(position, "list elements cannot be optional; wrap the list instead")
 		}
-		return validateTypeRef(*ref.element, position, false, false, known)
+		return validateTypeRef(*ref.element, position, false, known)
 	}
 	if !known(ref.name) {
 		return diagnostic(position, "unknown type %q", ref.name)
 	}
-	if ref.name == "void" && (!allowVoid || ref.optional) {
-		return diagnostic(position, "void is only valid as a non-optional method response")
-	}
-	if ref.name == "raw" && (!allowRaw || ref.optional) {
-		return diagnostic(position, "raw is only valid as a non-optional method response")
+	if (ref.name == "void" || ref.name == "raw") && (!response || ref.optional) {
+		return diagnostic(position, "%s is only valid as a non-optional method response", ref.name)
 	}
 	return nil
 }
@@ -479,11 +473,9 @@ func namedType(ref typeRef) string {
 }
 
 func referencedName(ref typeRef, names map[string]Position) string {
-	if ref.element != nil {
-		return referencedName(*ref.element, names)
-	}
-	if hasKey(names, ref.name) {
-		return ref.name
+	name := namedType(ref)
+	if hasKey(names, name) {
+		return name
 	}
 	return ""
 }
@@ -565,8 +557,10 @@ func pathParameters(path string) ([]string, error) {
 	if strings.ContainsAny(path, "?#") {
 		return nil, fmt.Errorf("query strings and fragments are not allowed")
 	}
-	var result []string
-	seen := make(map[string]bool)
+	var (
+		result []string
+		seen   = make(map[string]bool)
+	)
 	for offset := 0; offset < len(path); {
 		start := strings.IndexByte(path[offset:], '{')
 		if start < 0 {

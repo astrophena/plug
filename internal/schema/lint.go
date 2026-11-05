@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Lint performs static analysis on a validated [Schema] and returns diagnostic messages.
+// Lint reports unused declarations and missing documentation in a validated schema.
 func Lint(schema *Schema) []error {
 	if schema == nil {
 		return nil
@@ -17,7 +17,6 @@ func Lint(schema *Schema) []error {
 
 	var issues []error
 
-	// Check for unused permissions.
 	usedPermissions := make(map[string]bool)
 	for _, method := range schema.methods {
 		if method.permission != "" {
@@ -30,7 +29,6 @@ func Lint(schema *Schema) []error {
 		}
 	}
 
-	// Analyze reachability for types.
 	knownConstructors := groupConstructors(schema)
 	reachableTypes := make(map[string]bool)
 	var visitTypeRef func(ref typeRef)
@@ -61,14 +59,12 @@ func Lint(schema *Schema) []error {
 		}
 	}
 
-	// Check for unused newtypes.
 	for _, newtype := range schema.newtypes {
 		if !reachableTypes[newtype.name] {
 			issues = append(issues, diagnostic(newtype.position, "newtype %q is declared but never referenced", newtype.name))
 		}
 	}
 
-	// Check for unused constructors or record types.
 	visitedConstructorResults := make(map[string]bool)
 	for _, constructor := range schema.constructors {
 		if visitedConstructorResults[constructor.result] {
@@ -80,7 +76,6 @@ func Lint(schema *Schema) []error {
 		}
 	}
 
-	// Check documentation coverage.
 	lintDocumentation(&issues, schema.position, "package", schema.packageName, schema.documentation)
 	for _, category := range schema.categories {
 		lintDocumentation(&issues, category.position, "category", category.name, category.documentation)

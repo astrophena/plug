@@ -5,7 +5,6 @@
 package schema
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -51,12 +50,8 @@ func newLexer(filename, source string) *lexer {
 }
 
 func (l *lexer) next() (tokenValue, error) {
-	for l.offset < len(l.source) {
-		if isSpace(l.source[l.offset]) {
-			l.advance(l.source[l.offset])
-			continue
-		}
-		break
+	for l.offset < len(l.source) && isSpace(l.source[l.offset]) {
+		l.advance(l.source[l.offset])
 	}
 
 	position := l.position()
@@ -120,10 +115,7 @@ func (l *lexer) next() (tokenValue, error) {
 		l.advance('"')
 		for l.offset < len(l.source) && l.source[l.offset] != '"' {
 			if l.source[l.offset] == '\n' {
-				return tokenValue{}, &Error{
-					Position: position,
-					Message:  "unterminated string",
-				}
+				return tokenValue{}, diagnostic(position, "unterminated string")
 			}
 			if l.source[l.offset] == '\\' {
 				l.advance('\\')
@@ -134,18 +126,12 @@ func (l *lexer) next() (tokenValue, error) {
 			l.advance(l.source[l.offset])
 		}
 		if l.offset == len(l.source) {
-			return tokenValue{}, &Error{
-				Position: position,
-				Message:  "unterminated string",
-			}
+			return tokenValue{}, diagnostic(position, "unterminated string")
 		}
 		l.advance('"')
 		value, err := strconv.Unquote(l.source[start:l.offset])
 		if err != nil {
-			return tokenValue{}, &Error{
-				Position: position,
-				Message:  fmt.Sprintf("invalid string: %v", err),
-			}
+			return tokenValue{}, diagnostic(position, "invalid string: %v", err)
 		}
 		return tokenValue{
 			kind:     tokenString,
@@ -171,10 +157,7 @@ func (l *lexer) next() (tokenValue, error) {
 	case '>':
 		kind = tokenGreater
 	default:
-		return tokenValue{}, &Error{
-			Position: position,
-			Message:  fmt.Sprintf("unexpected character %q", value),
-		}
+		return tokenValue{}, diagnostic(position, "unexpected character %q", value)
 	}
 	return tokenValue{
 		kind:     kind,
@@ -202,12 +185,7 @@ func (l *lexer) advance(value byte) {
 }
 
 func isSpace(value byte) bool {
-	switch value {
-	case ' ', '\t', '\n', '\r':
-		return true
-	default:
-		return false
-	}
+	return value == ' ' || value == '\t' || value == '\n' || value == '\r'
 }
 
 func isIdentifierStart(value byte) bool {

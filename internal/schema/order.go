@@ -39,17 +39,20 @@ func newSchemaView(s *Schema) schemaView {
 	slices.SortFunc(v.newtypes, func(a, b newtype) int { return strings.Compare(a.name, b.name) })
 	slices.SortFunc(v.methods, func(a, b method) int { return strings.Compare(a.name, b.name) })
 	v.groupNames = sortedGroupNames(v.groups)
+
 	for _, value := range v.newtypes {
 		v.newtypeByName[value.name] = value
 	}
 	for _, dt := range s.types {
 		v.declaredTypes[dt.name] = dt
 	}
+
 	for i := range v.methods {
 		m := &v.methods[i]
 		m.http = sortedHTTP(m.http)
 		v.methodByName[m.name] = *m
 	}
+
 	for i := range v.categories {
 		c := &v.categories[i]
 		c.types = slices.Clone(c.types)
@@ -65,6 +68,7 @@ func groupConstructors(s *Schema) map[string][]constructor {
 	for _, c := range s.constructors {
 		groups[c.result] = append(groups[c.result], c)
 	}
+
 	for name := range groups {
 		slices.SortFunc(groups[name], func(a, b constructor) int { return strings.Compare(a.name, b.name) })
 	}

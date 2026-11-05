@@ -5,7 +5,6 @@
 package schema
 
 import (
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +47,7 @@ func (p *parser) parse() (*Schema, error) {
 	if keyword.text != "package" {
 		return nil, p.unexpected(keyword, "package declaration")
 	}
+
 	packageName, err := p.expect(tokenIdentifier, "package name")
 	if err != nil {
 		return nil, err
@@ -58,9 +58,7 @@ func (p *parser) parse() (*Schema, error) {
 		return nil, err
 	}
 	if next.kind == tokenIdentifier && next.text == "version" {
-		if _, err := p.take(); err != nil {
-			return nil, err
-		}
+		p.take()
 		value, err := p.expect(tokenNumber, "schema major version")
 		if err != nil {
 			return nil, err
@@ -94,10 +92,7 @@ func (p *parser) parse() (*Schema, error) {
 		}
 		if next.kind == tokenEOF {
 			if doc != "" {
-				return nil, &Error{
-					Position: next.position,
-					Message:  "documentation is not followed by a declaration",
-				}
+				return nil, diagnostic(next.position, "documentation is not followed by a declaration")
 			}
 			return result, nil
 		}
@@ -184,9 +179,7 @@ func (p *parser) parseConstructor(name tokenValue, doc string, fields []field) (
 		return constructor{}, err
 	}
 	if next.kind == tokenIdentifier && next.text == "httpStatus" {
-		if _, err := p.take(); err != nil {
-			return constructor{}, err
-		}
+		p.take()
 		value, err := p.expect(tokenNumber, "HTTP status")
 		if err != nil {
 			return constructor{}, err
@@ -336,9 +329,7 @@ func (p *parser) parseType(documentation string) (any, error) {
 		return nil, err
 	}
 	if next.kind == tokenEqual {
-		if _, err := p.take(); err != nil {
-			return nil, err
-		}
+		p.take()
 		base, err := p.expect(tokenIdentifier, "newtype scalar")
 		if err != nil {
 			return nil, err
@@ -377,13 +368,10 @@ func (p *parser) parseFields() ([]field, tokenValue, error) {
 		}
 		if next.kind == tokenEqual || next.kind == tokenArrow {
 			if documentation != "" {
-				return nil, tokenValue{}, &Error{
-					Position: next.position,
-					Message:  "documentation is not followed by a field",
-				}
+				return nil, tokenValue{}, diagnostic(next.position, "documentation is not followed by a field")
 			}
-			delimiter, err := p.take()
-			return fields, delimiter, err
+			p.take()
+			return fields, next, nil
 		}
 		name, err := p.expect(tokenIdentifier, "field name, '=' or '->'")
 		if err != nil {
@@ -432,9 +420,7 @@ func (p *parser) parseTypeRef() (typeRef, error) {
 		return typeRef{}, err
 	}
 	if next.kind == tokenQuestion {
-		if _, err := p.take(); err != nil {
-			return typeRef{}, err
-		}
+		p.take()
 		result.optional = true
 	}
 	return result, nil
@@ -450,11 +436,8 @@ func (p *parser) documentation() (string, error) {
 		if next.kind != tokenDoc {
 			return doc.Normalize(strings.Join(lines, "\n")), nil
 		}
-		value, err := p.take()
-		if err != nil {
-			return "", err
-		}
-		lines = append(lines, value.text)
+		p.take()
+		lines = append(lines, next.text)
 	}
 }
 
@@ -486,10 +469,7 @@ func (p *parser) unexpected(value tokenValue, expected string) error {
 	if value.kind == tokenEOF {
 		description = "end of file"
 	}
-	return &Error{
-		Position: value.position,
-		Message:  fmt.Sprintf("unexpected %q; expected %s", description, expected),
-	}
+	return diagnostic(value.position, "unexpected %q; expected %s", description, expected)
 }
 
 func (p *parser) look() (tokenValue, error) {
