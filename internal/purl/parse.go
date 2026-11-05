@@ -157,7 +157,7 @@ func parse(src string) ([]stmt, error) {
 	}
 
 	// Whitespace must not turn "= >" into "=>".
-	joined := make([]token, 0, len(tokens))
+	joined := tokens[:0]
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		if i+1 < len(tokens) && tokens[i+1].pos.Offset == t.pos.Offset+len(t.text) {

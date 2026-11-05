@@ -13,7 +13,7 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-// recordTable is a compact view, not a conversion: the records remain in _.
+// recordTable displays a list of records without changing its values.
 func recordTable(v value, width, limit int, now time.Time) (string, bool) {
 	xs, ok := v.data.([]value)
 	if !ok || len(xs) == 0 {

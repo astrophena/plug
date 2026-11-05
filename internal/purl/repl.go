@@ -341,32 +341,26 @@ Tab completes methods and arguments.
 
 `
 
-const helpText = `Call methods with named arguments:
-  overseer.getStatus()
-  let page = overseer.queryMessages(limit: 10)
-  page.items | take(3)
+const helpText = `Methods take named arguments. A bare method name shows its documentation.
+Tab completes methods and arguments without making calls.
 
-Bindings are lazy: their first use saves the result or error, even cancellation.
-Rebind to try again, or use a function for fresh calls:
-  let status = () => overseer.getStatus()
-  status()
+let saves an expression's first result or error, including cancellation.
+Rebind to try again; use a function for fresh calls:
+  let twice = x => x * 2
+  [1, 2, 3] | map(twice)
 
 _ holds the last successful result. x | f(y) means f(x, y).
-nil is a missing value; null is also accepted. JSON always uses null.
-A method name without parentheses shows its documentation, without calling it.
-Lists are fetched in full; pipes do not stream or fetch more pages.
+nil and null both mean a missing value. JSON uses null.
+Pipelines work on fetched values; they do not fetch more pages.
 
   :help [NAME]  help for a method, type, or function
   :schema       show the schema
   :vars         show user bindings
   :quit         exit
 
-Save scripts as *.purl and run them with purl -f FILE ENDPOINT.
-Tab completes without making calls. Ctrl-R searches history.
-Long output uses $PAGER or less. NO_PAGER disables paging.
-Ctrl-C cancels input or evaluation; Ctrl-D exits.
-History may contain secrets. Start input with a space to exclude it,
-or use -no-history to disable history entirely.
+Ctrl-C cancels input or evaluation; Ctrl-D exits. Ctrl-R searches history.
+Use purl -help for endpoints, flags, paging, and history settings.
+PlugScript guide: https://github.com/astrophena/plug/blob/master/docs/purl.md
 `
 
 func (s *session) command(source string) (string, bool, error) {

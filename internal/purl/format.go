@@ -178,9 +178,7 @@ func methodHelp(method plug.MethodInfo) string {
 	return clean(strings.TrimRight(b.String(), "\n") + "\n\n")
 }
 
-func format(v value, limit int) string {
-	return formatAt(v, limit, time.Time{})
-}
+func format(v value, limit int) string { return formatAt(v, limit, time.Time{}) }
 
 func formatAt(v value, limit int, now time.Time) string {
 	f := formatter{

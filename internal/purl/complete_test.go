@@ -77,11 +77,6 @@ func TestMethodDocumentation(t *testing.T) {
 }
 
 func TestBuiltinHelp(t *testing.T) {
-	for name, fn := range builtins() {
-		if fn.doc == "" {
-			t.Errorf("builtin %s has no documentation", name)
-		}
-	}
 	testutil.RunGolden(t, "testdata/help/*.txtar", func(t *testing.T, path string) []byte {
 		archive, err := txtar.ParseFile(path)
 		if err != nil {

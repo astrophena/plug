@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"go.astrophena.name/plug"
 	"go.astrophena.name/plug/plugimpl"
@@ -16,9 +17,7 @@ import (
 func (s *session) coerce(v value, t plug.TypeExpr) (value, error) {
 	if t.Optional {
 		if v.data == nil {
-			return value{
-				typ: &t,
-			}, nil
+			return value{typ: &t}, nil
 		}
 		inner := t
 		inner.Optional = false
@@ -78,14 +77,9 @@ func (s *session) coerce(v value, t plug.TypeExpr) (value, error) {
 				ctor: ctor.Name,
 			}
 			for _, f := range r.fields {
-				found := false
-				for _, want := range ctor.Fields {
-					if f.name == want.Name {
-						found = true
-						break
-					}
-				}
-				if !found {
+				if !slices.ContainsFunc(ctor.Fields, func(want plug.FieldInfo) bool {
+					return f.name == want.Name
+				}) {
 					return value{}, fmt.Errorf("%s: unknown field %q", t.Name, f.name)
 				}
 			}
@@ -204,9 +198,7 @@ func (s *session) codec(t plug.TypeExpr) plugimpl.Codec[value] {
 				if !plugimpl.Reserve[[]value](d, 1) {
 					return value{}
 				}
-				return value{
-					data: list.Decode(d),
-				}
+				return value{data: list.Decode(d)}
 			},
 		}
 	case t.Kind == plug.TypeExprNamed:
@@ -356,6 +348,7 @@ func (s *session) fieldsCodec(fields []plug.FieldInfo) plugimpl.Codec[value] {
 	for i, f := range fields {
 		codecs[i] = s.codec(f.Type)
 	}
+
 	return plugimpl.Codec[value]{
 		Encode: func(e *plugimpl.Encoder, v value) {
 			r := v.data.(*record)
@@ -388,9 +381,7 @@ func (s *session) fieldsCodec(fields []plug.FieldInfo) plugimpl.Codec[value] {
 					return value{}
 				}
 			}
-			return value{
-				data: r,
-			}
+			return value{data: r}
 		},
 	}
 }

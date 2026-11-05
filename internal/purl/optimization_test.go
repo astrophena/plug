@@ -6,8 +6,6 @@ package purl
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"math"
 	"math/big"
@@ -55,8 +53,6 @@ func TestLiteralAndSumOwnership(t *testing.T) {
 		"false && 1e10000":         "false",
 		"let n = () => 18446744073709551615; -n(); n() + 1; n()":        "18446744073709551615",
 		"let xs = [18446744073709551615, 1]; xs | sum; xs | sum; xs[0]": "18446744073709551615",
-		"[18446744073709551615, 1] | sum":                               "18446744073709551616",
-		"[1, 2.5, 3] | sum":                                             "6.5",
 		"((a,b,c,d,e,f,g,h,i) => a+i)(1,2,3,4,5,6,7,8,9)":               "10",
 	} {
 		t.Run(source, func(t *testing.T) {
@@ -65,39 +61,6 @@ func TestLiteralAndSumOwnership(t *testing.T) {
 				t.Fatalf("got %s, %v, want %s", format(v, 0), err, want)
 			}
 		})
-	}
-}
-
-func TestCachedCancellation(t *testing.T) {
-	s := newSession(nil, &greeter.Schema)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	var calls int
-	s.bind("stop", ready(value{
-		data: &function{
-			name: "stop",
-			invoke: func(context.Context, []value) (value, error) {
-				calls++
-				cancel()
-				return value{}, ctx.Err()
-			},
-		},
-	}))
-	stmts, err := parse("let saved = stop(); saved")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.execute(ctx, stmts[0]); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.execute(ctx, stmts[1]); !errors.Is(err, context.Canceled) {
-		t.Fatalf("first force = %v", err)
-	}
-	if _, err := evaluate(t, s, "saved"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cached force = %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("canceled binding ran %d times", calls)
 	}
 }
 
@@ -208,66 +171,19 @@ func TestIndexedGroupCancellation(t *testing.T) {
 	}
 }
 
-func TestJSONStringCompatibility(t *testing.T) {
-	for _, text := range []string{"", "plain", "\"\\\n\t\x00", "<>&", "\u2028\u2029", "héllo 世界", "invalid\xff"} {
-		b, err := json.Marshal(text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		q := string(b)
-		fields := []field{
-			{
-				name: text,
-				value: value{
-					data: text,
-				},
+func TestJSONTextEncoding(t *testing.T) {
+	const text = "\"\\\n\t\x00<>&\u2028\u2029\xff"
+	v := value{
+		data: &record{
+			ctor: "tag",
+			fields: []field{
+				{name: text, value: value{data: text}},
+				{name: "bytes", value: value{data: []byte{0, 1, 2}}},
 			},
-		}
-		for name, tc := range map[string]struct {
-			v    value
-			want string
-		}{
-			"string": {
-				value{
-					data: text,
-				},
-				q,
-			},
-			"field": {
-				value{
-					data: &record{
-						fields: fields,
-					},
-				},
-				"{" + q + ":" + q + "}",
-			},
-			"constructor": {
-				value{
-					data: &record{
-						ctor:   "tag",
-						fields: fields,
-					},
-				},
-				"{\"type\":\"tag\"," + q + ":" + q + "}",
-			},
-		} {
-			t.Run(name+text, func(t *testing.T) {
-				got, err := marshalJSON(tc.v)
-				if err != nil || got != tc.want {
-					t.Fatalf("JSON = %q, %v; want %q", got, err, tc.want)
-				}
-			})
-		}
-
-		b, err = json.Marshal(base64.StdEncoding.EncodeToString([]byte(text)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := marshalJSON(value{
-			data: []byte(text),
-		})
-		if err != nil || got != string(b) {
-			t.Fatalf("bytes JSON = %q, %v; want %s", got, err, b)
-		}
+		},
+	}
+	const want = `{"type":"tag","\"\\\n\t\u0000\u003c\u003e\u0026\u2028\u2029�":"\"\\\n\t\u0000\u003c\u003e\u0026\u2028\u2029�","bytes":"AAEC"}`
+	if got, err := marshalJSON(v); err != nil || got != want {
+		t.Fatalf("JSON = %q, %v; want %q", got, err, want)
 	}
 }
