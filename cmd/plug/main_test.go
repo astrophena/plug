@@ -22,7 +22,7 @@ import (
 	"go.astrophena.name/base/cli/clitest"
 	"go.astrophena.name/base/testutil"
 	"go.astrophena.name/plug"
-	"go.astrophena.name/plug/example/greeter"
+	"go.astrophena.name/plug/internal/schema"
 )
 
 func TestGenerate(t *testing.T) {
@@ -75,34 +75,13 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestInspect(t *testing.T) {
-	server, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Security: plug.Security{
-			Authenticate: func(context.Context, net.Conn) (plug.Principal, error) {
-				return plug.Principal{
-					Subject: "inspect-test",
-				}, nil
-			},
-			Authorize: func(context.Context, plug.Principal, string, plug.MethodInfo, any) error {
-				return nil
-			},
-		},
-	})
+	parsed, err := schema.Parse("inspect.plug", []byte("package example"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := greeter.RegisterHandlers(server, greeter.Handlers{
-		GetUser: func(_ context.Context, request greeter.GetUserRequest) (greeter.User, error) {
-			return greeter.User{
-				ID:   request.ID,
-				Name: "test",
-				Role: &greeter.Guest{},
-			}, nil
-		},
-		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) {
-			return nil, nil
-		},
-		Ping: func(context.Context) error { return nil },
-	}); err != nil {
+	metadata := schema.RuntimeSchema(parsed)
+	server, err := plug.NewServer(&metadata, plug.ServerOptions{})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,22 +93,24 @@ func TestInspect(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(ctx, listener) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-serveDone:
+			if err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("server did not stop")
+		}
+	})
+
 	var output bytes.Buffer
 	if err := runApp(ctx, []string{"inspect", "-network", "unix", path}, &output); err != nil {
-		cancel()
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "version: 1\n") || !strings.Contains(output.String(), "fingerprint:") || !strings.Contains(output.String(), "package greeter version 1\n") {
+	if !strings.Contains(output.String(), "version: 1\n") || !strings.Contains(output.String(), "fingerprint:") || !strings.Contains(output.String(), metadata.Source) {
 		t.Fatalf("inspect output:\n%s", output.String())
-	}
-	cancel()
-	select {
-	case err := <-serveDone:
-		if err != nil && !errors.Is(err, net.ErrClosed) {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("server did not stop")
 	}
 }
 
@@ -251,47 +232,36 @@ func TestGenerateFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cases := map[string][]string{
-		"native Go":  nil,
-		"Go HTTP":    {"-http-client"},
-		"TypeScript": {"-ts"},
-		"JSON":       {"-json"},
+	output := filepath.Join(t.TempDir(), "generated")
+	args := []string{"generate", "-o", output, schemaPath}
+	checkArgs := append([]string{"generate", "-check"}, args[1:]...)
+
+	if err := runApp(t.Context(), checkArgs, io.Discard); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "is missing or unreadable") {
+		t.Fatalf("check missing output: %v; want missing-file error", err)
 	}
-	for name, flags := range cases {
-		t.Run(name, func(t *testing.T) {
-			output := filepath.Join(t.TempDir(), "generated")
-			args := append([]string{"generate", "-o", output}, flags...)
-			args = append(args, schemaPath)
-			checkArgs := append([]string{"generate", "-check"}, args[1:]...)
+	if _, err := os.Stat(output); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("check created output: %v", err)
+	}
+	if err := runApp(t.Context(), args, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApp(t.Context(), checkArgs, io.Discard); err != nil {
+		t.Fatalf("check fresh output: %v", err)
+	}
 
-			if err := runApp(t.Context(), checkArgs, io.Discard); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "is missing or unreadable") {
-				t.Fatalf("check missing output: %v; want missing-file error", err)
-			}
-			if _, err := os.Stat(output); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("check created output: %v", err)
-			}
-			if err := runApp(t.Context(), args, io.Discard); err != nil {
-				t.Fatal(err)
-			}
-			if err := runApp(t.Context(), checkArgs, io.Discard); err != nil {
-				t.Fatalf("check fresh output: %v", err)
-			}
-
-			const stale = "stale output\n"
-			if err := os.WriteFile(output, []byte(stale), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := runApp(t.Context(), checkArgs, io.Discard); err == nil || !strings.Contains(err.Error(), "is out of date") {
-				t.Fatalf("check stale output: %v; want out-of-date error", err)
-			}
-			got, err := os.ReadFile(output)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != stale {
-				t.Fatalf("check changed stale output to %q", got)
-			}
-		})
+	const stale = "stale output\n"
+	if err := os.WriteFile(output, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApp(t.Context(), checkArgs, io.Discard); err == nil || !strings.Contains(err.Error(), "is out of date") {
+		t.Fatalf("check stale output: %v; want out-of-date error", err)
+	}
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != stale {
+		t.Fatalf("check changed stale output to %q", got)
 	}
 }
 

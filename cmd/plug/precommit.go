@@ -20,7 +20,7 @@ import (
 type indexSchema struct {
 	path    string
 	oldPath string
-	status  string // A, M, D, R, C, or tracked
+	deleted bool
 }
 
 func indexSchemas(ctx context.Context, dir string) ([]indexSchema, error) {
@@ -59,13 +59,12 @@ func indexSchemas(ctx context.Context, dir string) ([]indexSchema, error) {
 					items[newPath] = indexSchema{
 						path:    newPath,
 						oldPath: path,
-						status:  status,
 					}
 				}
 			} else if strings.HasSuffix(path, ".plug") {
 				items[path] = indexSchema{
-					path:   path,
-					status: status,
+					path:    path,
+					deleted: status == "D",
 				}
 			}
 		}
@@ -82,8 +81,7 @@ func indexSchemas(ctx context.Context, dir string) ([]indexSchema, error) {
 		if strings.HasSuffix(path, ".plug") {
 			if _, exists := items[path]; !exists {
 				items[path] = indexSchema{
-					path:   path,
-					status: "tracked",
+					path: path,
 				}
 			}
 		}
@@ -157,16 +155,14 @@ func runPreCommit(ctx context.Context, args []string, stderr io.Writer) error {
 		return nil
 	}
 
-	fileWord := "files"
-	hasWord := "have"
 	schemaWord := "schemas"
+	message := fmt.Sprintf("✗ Pre-commit check failed: %d schema files have issues:", len(issues))
 	if len(issues) == 1 {
-		fileWord = "file"
-		hasWord = "has"
 		schemaWord = "schema"
+		message = "✗ Pre-commit check failed: 1 schema file has issues:"
 	}
 
-	fmt.Fprintf(stderr, "%s✗ Pre-commit check failed: %d schema %s %s issues:%s\n\n", red, len(issues), fileWord, hasWord, reset)
+	fmt.Fprintf(stderr, "%s%s%s\n\n", red, message, reset)
 	for _, issue := range issues {
 		fmt.Fprintf(stderr, "  %s%s%s:\n", cyan, issue.path, reset)
 		for _, item := range issue.problems {
@@ -179,7 +175,7 @@ func runPreCommit(ctx context.Context, args []string, stderr io.Writer) error {
 }
 
 func checkIndexSchema(ctx context.Context, dir string, item indexSchema) []string {
-	if item.status == "D" {
+	if item.deleted {
 		return []string{"schema file was deleted"}
 	}
 
