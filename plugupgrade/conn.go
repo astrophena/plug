@@ -14,6 +14,4 @@ type bufferedConn struct {
 	reader *bufio.Reader
 }
 
-func (c *bufferedConn) Read(data []byte) (int, error) {
-	return c.reader.Read(data)
-}
+func (c *bufferedConn) Read(data []byte) (int, error) { return c.reader.Read(data) }

@@ -27,7 +27,7 @@ const (
 	TypeSum
 )
 
-// Schema describes a Plug service contract.
+// Schema describes a Plug service.
 type Schema struct {
 	// Package is the schema namespace and generated Go package name.
 	Package string
@@ -46,7 +46,7 @@ type Schema struct {
 	Types []TypeInfo
 	// Categories group types and methods for documentation.
 	Categories []CategoryInfo
-	// Methods lists every RPC method in the service contract.
+	// Methods lists the service's RPC methods.
 	Methods []MethodInfo
 }
 
@@ -180,7 +180,7 @@ type MethodInfo struct {
 	Error string
 	// Public reports whether anonymous callers may invoke the method.
 	Public bool
-	// Permission is the capability required to invoke the method.
+	// Permission is required to invoke a private method.
 	Permission string
 	HTTP       []HTTPBindingInfo
 }
@@ -332,7 +332,7 @@ func MethodIsRaw(method MethodInfo) bool {
 	return method.Response.Kind == TypeExprPrimitive && method.Response.Name == "raw" && !method.Response.Optional && method.Response.Element == nil
 }
 
-// PermissionInfo describes an authorization capability.
+// PermissionInfo describes a permission.
 type PermissionInfo struct {
 	// Name is the dotted permission identifier.
 	Name          string

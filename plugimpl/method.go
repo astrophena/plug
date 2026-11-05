@@ -56,17 +56,13 @@ func NewRawMethod[Request any](
 }
 
 // Info returns the schema metadata for m.
-func (m Method[Request, Response]) Info() MethodInfo {
-	return methodInfo(m.schema, m.id)
-}
+func (m Method[Request, Response]) Info() MethodInfo { return methodInfo(m.schema, m.id) }
 
 // Schema returns the generated schema that owns m.
 func (m Method[Request, Response]) Schema() *Schema { return m.schema }
 
 // Info returns the schema metadata for m.
-func (m RawMethod[Request]) Info() MethodInfo {
-	return methodInfo(m.schema, m.id)
-}
+func (m RawMethod[Request]) Info() MethodInfo { return methodInfo(m.schema, m.id) }
 
 // Schema returns the generated schema that owns m.
 func (m RawMethod[Request]) Schema() *Schema { return m.schema }

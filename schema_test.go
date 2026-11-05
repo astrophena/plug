@@ -12,18 +12,6 @@ import (
 	"go.astrophena.name/plug/plugimpl"
 )
 
-func TestSchemaDeepCopiesCategories(t *testing.T) {
-	if err := plugimpl.ValidateSchema(&greeter.Schema); err != nil {
-		t.Fatalf("generated schema is invalid: %v", err)
-	}
-
-	copy := plugimpl.CopySchema(&greeter.Schema)
-	copy.Categories[0].Types[0] = "changed"
-	if greeter.Schema.Categories[0].Types[0] == "changed" {
-		t.Fatal("DeepCopy shares category storage with the original schema")
-	}
-}
-
 func TestServerOwnsSchema(t *testing.T) {
 	schema := plugimpl.CopySchema(&greeter.Schema)
 	server, err := plug.NewServer(schema, plug.ServerOptions{})
@@ -32,6 +20,11 @@ func TestServerOwnsSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { server.Shutdown(t.Context()) })
 
+	schema.Categories[0].Types[0] = "changed"
+	if server.Schema().Categories[0].Types[0] == "changed" {
+		t.Fatal("input changed server categories")
+	}
+
 	for i, method := range schema.Methods {
 		if method.Name != "greeter.listUsers" {
 			continue
@@ -39,6 +32,10 @@ func TestServerOwnsSchema(t *testing.T) {
 
 		schema.Methods[i].Response.Element.Name = "changed input"
 		snapshot := server.Schema()
+		snapshot.Categories[0].Types[0] = "changed snapshot"
+		if server.Schema().Categories[0].Types[0] == "changed snapshot" {
+			t.Fatal("snapshot changed server categories")
+		}
 		if got := snapshot.Methods[i].Response.Element.Name; got != "User" {
 			t.Fatalf("input changed server response type to %q", got)
 		}

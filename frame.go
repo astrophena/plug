@@ -195,14 +195,13 @@ func (f *framer) writeFrameWithStats(v frame) (payloadStats, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.werr == nil {
-		var stats payloadStats
-		stats, f.werr = f.writeFrameLocked(v)
-		return stats, f.werr
+	if f.werr != nil {
+		return payloadStats{size: len(v.payload)}, f.werr
 	}
-	return payloadStats{
-		size: len(v.payload),
-	}, f.werr
+
+	stats, err := f.writeFrameLocked(v)
+	f.werr = err
+	return stats, err
 }
 
 func (f *framer) writeRequest(requestID uint64, methodID uint32, payload []byte) error {

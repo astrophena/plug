@@ -28,12 +28,15 @@ const (
 type Limits struct {
 	// MaxFrameSize bounds the bytes following a frame length prefix.
 	MaxFrameSize uint32
+
 	// MaxListElements bounds each encoded list and the total list elements
 	// decoded from one payload.
 	MaxListElements uint32
+
 	// MaxDecodeBytes bounds requested allocation bytes while decoding one
 	// payload, including replaced slice storage. Frame buffers are separate.
 	MaxDecodeBytes uint64
+
 	// MaxConcurrentCalls bounds active concurrent calls per server connection.
 	MaxConcurrentCalls uint32
 }
@@ -93,31 +96,38 @@ type ErrorEvent struct {
 // ErrorReporter receives runtime errors.
 type ErrorReporter func(context.Context, ErrorEvent)
 
-// ServerOptions configures a Plug server. Zero fields select safe defaults.
+// ServerOptions configures a Plug server.
 type ServerOptions struct {
-	// Limits optionally overrides the runtime safety defaults.
+	// Limits overrides the default resource limits.
 	Limits Limits
+
 	// Compression accepts zstd-compressed frames.
 	Compression bool
+
 	// StrictSchema requires matching schema fingerprints.
 	StrictSchema bool
+
 	// Security configures authentication and authorization.
 	Security Security
+
 	// ObserveCall is called after every completed handler invocation. The
 	// observer must not modify any argument and must not block.
 	ObserveCall CallObserver
+
 	// ReportError receives diagnostic runtime error events.
 	ReportError ErrorReporter
 }
 
-// ClientOptions configures a Plug client. Zero fields select safe defaults.
+// ClientOptions configures a Plug client.
 type ClientOptions struct {
-	// Limits optionally overrides the runtime safety defaults.
+	// Limits overrides the default resource limits.
 	Limits Limits
+
 	// Compression requests zstd-compressed frames. Dial retries without
 	// compression when the peer does not support it. NewClient cannot retry an
 	// existing connection and returns an error instead.
 	Compression bool
+
 	// StrictSchema requires matching schema fingerprints.
 	StrictSchema bool
 }
@@ -156,7 +166,7 @@ type CallEvent struct {
 	Principal Principal
 	// HasPrincipal reports whether an authenticated principal was present.
 	HasPrincipal bool
-	// Duration is the total wall-clock duration of the call lifecycle.
+	// Duration measures the call through response encoding.
 	Duration time.Duration
 	// HandlerDuration is the wall-clock handler execution time when entered.
 	HandlerDuration time.Duration

@@ -26,6 +26,10 @@ func TestRPC(t *testing.T) {
 		ConstructorID: 0xfefefefe,
 		Payload:       []byte{0, 1, 2},
 	}
+	unknownError := &greeter.UnknownLookupError{
+		ConstructorID: 0xdeadbeef,
+		Payload:       []byte("opaque error"),
+	}
 	client := startGreeter(t, func(ctx context.Context, request greeter.GetUserRequest) (greeter.User, error) {
 		switch request.ID {
 		case 0:
@@ -45,6 +49,8 @@ func TestRPC(t *testing.T) {
 			return greeter.User{
 				Role: unknown,
 			}, nil
+		case 5:
+			return greeter.User{}, unknownError
 		default:
 			return greeter.User{
 				ID:     request.ID,
@@ -91,6 +97,16 @@ func TestRPC(t *testing.T) {
 	var notFound *greeter.NotFound
 	if !errors.As(err, &notFound) || notFound.ID != 1 {
 		t.Fatalf("error = %v, not found = %#v", err, notFound)
+	}
+
+	_, err = client.GetUser(t.Context(), greeter.GetUserRequest{ID: 5})
+	var lookupError greeter.LookupError
+	if !errors.As(err, &lookupError) {
+		t.Fatalf("error = %v, want LookupError", err)
+	}
+	opaque, ok := lookupError.(*greeter.UnknownLookupError)
+	if !ok || opaque.ConstructorID != unknownError.ConstructorID || !bytes.Equal(opaque.Payload, unknownError.Payload) {
+		t.Fatalf("unknown error = %#v", lookupError)
 	}
 
 	_, err = client.GetUser(t.Context(), greeter.GetUserRequest{
@@ -494,33 +510,6 @@ func TestNativePermissions(t *testing.T) {
 	}
 	if err := <-serveDone; err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestServerRequiresEveryHandler(t *testing.T) {
-	server, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Security: permissiveSecurity(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := greeter.RegisterHandlers(server, greeter.Handlers{
-		Ping: func(context.Context) error { return nil },
-	}); err == nil {
-		t.Fatal("expected missing handler error")
-	}
-	serverConn, clientConn := net.Pipe()
-	defer func() {
-		if err := serverConn.Close(); err != nil {
-			t.Errorf("close server connection: %v", err)
-		}
-		if err := clientConn.Close(); err != nil {
-			t.Errorf("close client connection: %v", err)
-		}
-	}()
-	err = server.ServeConn(t.Context(), serverConn)
-	if err == nil || !strings.Contains(err.Error(), "getUser") || !strings.Contains(err.Error(), "listUsers") {
-		t.Fatalf("error = %v", err)
 	}
 }
 

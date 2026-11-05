@@ -85,6 +85,7 @@ func NewServer(schema *Schema, opts ServerOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	serverCtx, cancelCalls := context.WithCancel(context.Background())
 	return &Server{
 		schema:       schema,
@@ -104,7 +105,7 @@ func NewServer(schema *Schema, opts ServerOptions) (*Server, error) {
 // Schema returns an independent copy of the server's validated schema.
 func (s *Server) Schema() *Schema { return plugimpl.CopySchema(s.schema) }
 
-// Limits returns the server's runtime safety limits.
+// Limits returns the server's resource limits.
 func (s *Server) Limits() Limits { return s.limits }
 
 // Shutdown rejects new calls, cancels active calls, and waits for them to finish
@@ -114,6 +115,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
 	}
+
 	s.shutdownMu.Lock()
 	if !s.shuttingDown {
 		s.shuttingDown = true
@@ -139,6 +141,7 @@ func (s *Server) trackConnectionCall(parentCtx context.Context) (context.Context
 	if err := s.addActiveCall(); err != nil {
 		return nil, nil, err
 	}
+
 	callCtx, cancel := context.WithCancel(parentCtx)
 	return callCtx, cancel, nil
 }
@@ -151,9 +154,11 @@ func (s *Server) finishConnectionCall(cancel context.CancelFunc) {
 func (s *Server) addActiveCall() error {
 	s.shutdownMu.Lock()
 	defer s.shutdownMu.Unlock()
+
 	if s.shuttingDown {
 		return fmt.Errorf("plug: server is shutting down")
 	}
+
 	s.activeCalls.Add(1)
 	return nil
 }
@@ -164,6 +169,7 @@ func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
 	}
+
 	s.handlersMu.Lock()
 	defer s.handlersMu.Unlock()
 
@@ -205,21 +211,15 @@ func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 			return fmt.Errorf("plug: duplicate handler registration in batch for method %s (already in batch as %s)", info.Name, prev.info.Name)
 		}
 
-		var (
-			invoke    func(context.Context, []byte) callResult
-			invokeRaw func(context.Context, []byte, *RawStream) callResult
-		)
+		entry := handlerEntry{info: info}
 		if reg.Raw {
-			invokeRaw = newRawInvoke(s, info, reg)
+			entry.invokeRaw = newRawInvoke(s, info, reg)
 		} else {
-			invoke = newInvoke(s, info, reg)
+			entry.invoke = newInvoke(s, info, reg)
 		}
-		batch[reg.ID] = handlerEntry{
-			info:      info,
-			invoke:    invoke,
-			invokeRaw: invokeRaw,
-		}
+		batch[reg.ID] = entry
 	}
+
 	maps.Copy(s.handlers, batch)
 	return nil
 }
@@ -356,9 +356,11 @@ func (s *Server) Seal() error {
 
 	s.handlersMu.Lock()
 	defer s.handlersMu.Unlock()
+
 	if s.sealed {
 		return nil
 	}
+
 	var missing []string
 	for _, method := range s.schema.Methods {
 		if _, ok := s.handlers[method.ID]; !ok {
@@ -369,11 +371,13 @@ func (s *Server) Seal() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("plug: missing handlers for %s", strings.Join(missing, ", "))
 	}
+
 	for _, method := range s.schema.Methods {
 		if !method.Public && s.security.Authorize == nil {
 			return fmt.Errorf("plug: method %s requires permission %q but no authorizer is configured", method.Name, method.Permission)
 		}
 	}
+
 	s.sealed = true
 	return nil
 }

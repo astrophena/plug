@@ -14,11 +14,11 @@ const (
 	TypeNewtype = plugimpl.TypeNewtype
 	// TypeRecord is a concrete positional record.
 	TypeRecord = plugimpl.TypeRecord
-	// TypeSum is a sealed constructor union.
+	// TypeSum has two or more constructors.
 	TypeSum = plugimpl.TypeSum
 )
 
-// Schema describes a Plug service contract.
+// Schema describes a Plug service.
 type Schema = plugimpl.Schema
 
 // TypeInfo describes a named schema type.
@@ -48,7 +48,7 @@ type MethodInfo = plugimpl.MethodInfo
 // CategoryInfo groups types and methods for generated documentation.
 type CategoryInfo = plugimpl.CategoryInfo
 
-// PermissionInfo describes an authorization capability.
+// PermissionInfo describes a permission.
 type PermissionInfo = plugimpl.PermissionInfo
 
 // HTTPBindingInfo describes an HTTP route declared by a method.

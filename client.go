@@ -67,10 +67,12 @@ type Client struct {
 }
 
 // NewClient performs the schema handshake and takes ownership of conn.
+// It keeps an independent copy of schema.
 func NewClient(ctx context.Context, conn net.Conn, schema *Schema, opts ClientOptions) (*Client, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("plug: connection is nil")
 	}
+
 	schema, limits, err := normalizeSchemaLimits(schema, opts.Limits)
 	if err != nil {
 		return nil, errors.Join(err, conn.Close())
@@ -189,6 +191,7 @@ func (c *Client) readLoop() {
 			c.shutdown(fmt.Errorf("plug: server sent invalid frame kind %d", value.kind))
 			return
 		}
+
 		shard := &c.shards[value.requestID%numPendingShards]
 		shard.mu.Lock()
 		pending, ok := shard.m[value.requestID]
@@ -196,6 +199,7 @@ func (c *Client) readLoop() {
 			delete(shard.m, value.requestID)
 		}
 		shard.mu.Unlock()
+
 		if ok {
 			pending.response <- value
 		}
@@ -208,14 +212,17 @@ func (c *Client) addPending(id uint64, pending *pendingCall) error {
 		return c.closeErr
 	default:
 	}
+
 	shard := &c.shards[id%numPendingShards]
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+
 	select {
 	case <-c.done:
 		return c.closeErr
 	default:
 	}
+
 	shard.m[id] = pending
 	return nil
 }
@@ -252,12 +259,14 @@ func (c *Client) sendRequest(ctx context.Context, id uint64, method uint32, enc 
 func (c *Client) sendCancel(id uint64) {
 	c.cancelMu.Lock()
 	defer c.cancelMu.Unlock()
+
 	select {
 	case <-c.done:
 		return
 	default:
 	}
 	c.cancels = append(c.cancels, id)
+
 	select {
 	case c.cancelReady <- struct{}{}:
 	default:
@@ -288,6 +297,7 @@ func (c *Client) writeCancels() error {
 	ids := c.cancels
 	c.cancels = nil
 	c.cancelMu.Unlock()
+
 	for _, id := range ids {
 		if err := c.framer.writeCancel(id); err != nil {
 			return err

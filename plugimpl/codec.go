@@ -52,7 +52,8 @@ type Encoder struct {
 // Err returns the first encoding error.
 func (e *Encoder) Err() error { return e.err }
 
-// Data returns the encoded payload. The result aliases encoder storage.
+// Data returns the encoded payload. The result aliases encoder storage and
+// stays valid until the encoder is reused or released.
 func (e *Encoder) Data() []byte { return e.data }
 
 // Fail records err if no earlier encoding error occurred.
@@ -77,24 +78,16 @@ func (e *Encoder) Bool(value bool) {
 }
 
 // I32 encodes a signed 32-bit integer.
-func (e *Encoder) I32(value int32) {
-	e.data = binary.AppendVarint(e.data, int64(value))
-}
+func (e *Encoder) I32(value int32) { e.data = binary.AppendVarint(e.data, int64(value)) }
 
 // U32 encodes an unsigned 32-bit integer.
-func (e *Encoder) U32(value uint32) {
-	e.data = binary.AppendUvarint(e.data, uint64(value))
-}
+func (e *Encoder) U32(value uint32) { e.data = binary.AppendUvarint(e.data, uint64(value)) }
 
 // I64 encodes a signed 64-bit integer.
-func (e *Encoder) I64(value int64) {
-	e.data = binary.AppendVarint(e.data, value)
-}
+func (e *Encoder) I64(value int64) { e.data = binary.AppendVarint(e.data, value) }
 
 // U64 encodes an unsigned 64-bit integer.
-func (e *Encoder) U64(value uint64) {
-	e.data = binary.AppendUvarint(e.data, value)
-}
+func (e *Encoder) U64(value uint64) { e.data = binary.AppendUvarint(e.data, value) }
 
 // F64 encodes a 64-bit floating point value.
 func (e *Encoder) F64(value float64) {
@@ -594,6 +587,7 @@ var (
 )
 
 // PooledEncoder returns a reset encoder from the shared pool.
+// The caller must return it with [ReleaseEncoder].
 func PooledEncoder(maxListElements uint32) *Encoder {
 	e := encoderPool.Get().(*Encoder)
 	e.data = e.data[:0]
@@ -603,6 +597,7 @@ func PooledEncoder(maxListElements uint32) *Encoder {
 }
 
 // ReleaseEncoder returns e to the shared pool when its buffer is small enough.
+// The caller must stop using e and its payload afterward.
 func ReleaseEncoder(e *Encoder) {
 	if cap(e.data) <= maxRetainedBufferSize {
 		encoderPool.Put(e)
