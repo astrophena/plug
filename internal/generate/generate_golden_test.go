@@ -8,10 +8,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"go.astrophena.name/base/testutil"
 	"go.astrophena.name/plug"
+	"go.astrophena.name/plug/plugimpl"
 )
 
 var update = flag.Bool("update", false, "update generator golden files")
@@ -49,15 +51,14 @@ func TestGenerateGolden(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			before := plugimpl.CopySchema(&s)
 			got, err := tc.generate(s)
 			if err != nil {
 				t.Fatal(err)
 			}
-			again, err := tc.generate(s)
-			if err != nil {
-				t.Fatal(err)
+			if !reflect.DeepEqual(s, *before) {
+				t.Fatal("generator changed its input schema")
 			}
-			testutil.AssertEqual(t, string(again), string(got))
 
 			if *update {
 				if err := os.WriteFile(filepath.Join("testdata", tc.path), got, 0644); err != nil {

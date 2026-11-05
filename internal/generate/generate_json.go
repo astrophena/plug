@@ -15,37 +15,35 @@ import (
 	"go.astrophena.name/plug"
 )
 
-// JSON returns a deterministic JSON description of s in the format specified
-// by the [JSON schema specification].
+// JSON returns a deterministic JSON export of s. See the [schema export format].
 //
-// [JSON schema specification]: https://github.com/astrophena/plug/tree/master/docs/schema-json.md
+// [schema export format]: https://github.com/astrophena/plug/tree/master/docs/schema-json.md
 func JSON(s plug.Schema) ([]byte, error) {
-	runtime := s
-	runtime.Types = slices.Clone(s.Types)
 	document := jsonSchema{
 		FormatVersion:   1,
 		ProtocolVersion: 1,
-		Package:         runtime.Package,
-		Major:           runtime.Major,
-		Family:          hex.EncodeToString(runtime.Family[:]),
-		Fingerprint:     hex.EncodeToString(runtime.Fingerprint[:]),
-		Documentation:   runtime.Documentation,
-		Permissions:     make([]jsonPermission, len(runtime.Permissions)),
-		Types:           make([]jsonType, len(runtime.Types)),
-		Categories:      make([]jsonCategory, len(runtime.Categories)),
-		Methods:         make([]jsonMethod, len(runtime.Methods)),
+		Package:         s.Package,
+		Major:           s.Major,
+		Family:          hex.EncodeToString(s.Family[:]),
+		Fingerprint:     hex.EncodeToString(s.Fingerprint[:]),
+		Documentation:   s.Documentation,
+		Permissions:     make([]jsonPermission, len(s.Permissions)),
+		Types:           make([]jsonType, len(s.Types)),
+		Categories:      make([]jsonCategory, len(s.Categories)),
+		Methods:         make([]jsonMethod, len(s.Methods)),
 	}
-	for i, permission := range runtime.Permissions {
+	for i, permission := range s.Permissions {
 		document.Permissions[i] = jsonPermission{
 			Name:          permission.Name,
 			Documentation: permission.Documentation,
 		}
 	}
 
-	slices.SortFunc(runtime.Types, func(a, b plug.TypeInfo) int {
+	types := slices.Clone(s.Types)
+	slices.SortFunc(types, func(a, b plug.TypeInfo) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	for i, typ := range runtime.Types {
+	for i, typ := range types {
 		var kind string
 		switch typ.Kind {
 		case plug.TypeNewtype:
@@ -76,7 +74,7 @@ func JSON(s plug.Schema) ([]byte, error) {
 		}
 	}
 
-	for i, category := range runtime.Categories {
+	for i, category := range s.Categories {
 		document.Categories[i] = jsonCategory{
 			Name:          category.Name,
 			Documentation: category.Documentation,
@@ -84,7 +82,7 @@ func JSON(s plug.Schema) ([]byte, error) {
 			Methods:       category.Methods,
 		}
 	}
-	for i, method := range runtime.Methods {
+	for i, method := range s.Methods {
 		document.Methods[i] = jsonMethod{
 			Name:          method.Name,
 			Documentation: method.Documentation,

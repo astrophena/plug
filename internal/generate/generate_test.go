@@ -6,47 +6,12 @@ package generate
 
 import (
 	"bytes"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"go.astrophena.name/plug"
 )
-
-func TestGeneratorsDoNotMutateSchema(t *testing.T) {
-	source := []byte(`
-package test
-type ZID = i64
-item id: ZID note: string? = Item
-test.get id: ZID -> Item? public http GET "/items/{id}"
-`)
-	s, err := parse("test.plug", source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := parse("test.plug", source)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	generators := map[string]func(plug.Schema) ([]byte, error){
-		"native Go":  Go,
-		"Go HTTP":    GoHTTPClient,
-		"TypeScript": TypeScript,
-		"JSON":       JSON,
-	}
-	for name, generate := range generators {
-		t.Run(name, func(t *testing.T) {
-			if _, err := generate(s); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(s, want) {
-				t.Fatal("generator mutated resolved schema")
-			}
-		})
-	}
-}
 
 func TestHTTPClientBindingOrderDoesNotAffectOutput(t *testing.T) {
 	const schemaStart = `

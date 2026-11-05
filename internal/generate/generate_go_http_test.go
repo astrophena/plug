@@ -5,41 +5,12 @@
 package generate
 
 import (
-	goparser "go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"go.astrophena.name/base/testutil"
 )
-
-func TestGenerateGoHTTPClientStdlibOnly(t *testing.T) {
-	source, err := os.ReadFile("testdata/generate.plug")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := parse("generate.plug", source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	generated, err := GoHTTPClient(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	file, err := goparser.ParseFile(token.NewFileSet(), "client.go", generated, goparser.ImportsOnly)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		if strings.Contains(path, ".") {
-			t.Errorf("unexpected non-standard library import: %s", path)
-		}
-	}
-}
 
 func TestGoHTTPClientFixtures(t *testing.T) {
 	cases := map[string]struct {

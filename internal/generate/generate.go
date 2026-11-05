@@ -116,7 +116,7 @@ func (g *generator) writePermissions() {
 
 	for _, p := range g.schema.Permissions {
 		name := "Permission" + names.Go(p.Name)
-		g.doc(name, p.Name, fmt.Sprintf("is the %s authorization capability.", p.Name), p.Documentation)
+		g.doc(name, p.Name, fmt.Sprintf("is the %s permission.", p.Name), p.Documentation)
 		g.line("const %s = %s", name, strconv.Quote(p.Name))
 		g.line("")
 	}

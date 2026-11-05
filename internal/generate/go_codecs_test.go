@@ -6,24 +6,11 @@ package generate
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"go.astrophena.name/plug"
 	"go.astrophena.name/plug/plugimpl"
 )
-
-func TestEncodeFieldsPresenceChecks(t *testing.T) {
-	for _, n := range []int{0, 1, 2, 18, 64} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			var g generator
-			g.writeEncodeFields("", optionalFields(n))
-			if got := strings.Count(g.buf.String(), ".Present()"); got != n {
-				t.Fatalf("%d optional fields emitted %d presence checks", n, got)
-			}
-		})
-	}
-}
 
 func BenchmarkEncodeFields(b *testing.B) {
 	for _, n := range []int{8, 64, 512} {

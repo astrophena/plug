@@ -51,6 +51,7 @@ func newModel(s plug.Schema) model {
 	slices.SortFunc(m.constructors, func(a, b constructor) int {
 		return strings.Compare(a.Name, b.Name)
 	})
+
 	for _, c := range m.constructors {
 		if m.types[c.result].Error {
 			m.errorConstructors = append(m.errorConstructors, c)
@@ -95,10 +96,12 @@ func analyzeHTTPMethod(m plug.MethodInfo) httpMethod {
 	for _, field := range m.Fields {
 		fields[field.Name] = field
 	}
+
 	for _, name := range params {
 		pathNames[name] = true
 		result.pathFields = append(result.pathFields, fields[name])
 	}
+
 	for _, field := range m.Fields {
 		if pathNames[field.Name] {
 			continue
