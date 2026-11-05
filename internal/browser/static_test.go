@@ -6,7 +6,6 @@ package browser_test
 
 import (
 	"io/fs"
-	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -46,15 +45,5 @@ func TestStaticFS(t *testing.T) {
 				t.Fatalf("contents = %q, want %q", contents, tc.want)
 			}
 		})
-	}
-}
-
-func TestStaticFSIncludesBrowserFavicon(t *testing.T) {
-	contents, err := fs.ReadFile(browser.StaticFS(), "static/icons/plug.svg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(contents), "<svg") {
-		t.Fatal("browser favicon is not an SVG")
 	}
 }

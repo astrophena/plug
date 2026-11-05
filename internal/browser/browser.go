@@ -25,7 +25,6 @@ import (
 )
 
 // New returns a schema browser with HTML pages and an index.md download.
-// It reports invalid schemas and categories as errors.
 func New(schema *plug.Schema) (http.Handler, error) {
 	if err := plugimpl.ValidateSchema(schema); err != nil {
 		return nil, err
@@ -63,7 +62,7 @@ func (b *browser) initMethods() {
 
 	for _, info := range methods {
 		item := method{
-			Info: info,
+			MethodInfo: info,
 		}
 		b.httpRoutes += len(info.HTTP)
 
@@ -89,10 +88,10 @@ func (b *browser) initTypes() {
 
 	for _, typ := range types {
 		item := typeDoc{
-			Info: typ,
+			TypeInfo: typ,
 		}
 		for _, m := range b.methods {
-			info := m.Info
+			info := m.MethodInfo
 			if usesType(info.Fields, typ.Name) {
 				item.Requests = append(item.Requests, info)
 			}
@@ -142,10 +141,10 @@ func (b *browser) initCategories() {
 		}
 
 		slices.SortFunc(item.Methods, func(a, b method) int {
-			return strings.Compare(a.Info.Name, b.Info.Name)
+			return strings.Compare(a.Name, b.Name)
 		})
 		slices.SortFunc(item.Types, func(a, b typeDoc) int {
-			return strings.Compare(a.Info.Name, b.Info.Name)
+			return strings.Compare(a.Name, b.Name)
 		})
 		if len(item.Methods) > 0 {
 			b.methodCategories = append(b.methodCategories, item)
@@ -157,7 +156,7 @@ func (b *browser) initCategories() {
 
 	if len(b.methodCategories) > 0 {
 		for _, method := range b.methods {
-			if !categorizedMethods[method.Info.Name] {
+			if !categorizedMethods[method.Name] {
 				b.otherMethods = append(b.otherMethods, method)
 			}
 		}
@@ -165,7 +164,7 @@ func (b *browser) initCategories() {
 
 	if len(b.typeCategories) > 0 {
 		for _, typ := range b.types {
-			if !categorizedTypes[typ.Info.Name] {
+			if !categorizedTypes[typ.Name] {
 				b.otherTypes = append(b.otherTypes, typ)
 			}
 		}
@@ -229,7 +228,7 @@ type browser struct {
 }
 
 type method struct {
-	Info   plug.MethodInfo
+	plug.MethodInfo
 	Errors []plug.ConstructorInfo
 }
 
@@ -241,7 +240,7 @@ type category struct {
 }
 
 type typeDoc struct {
-	Info      plug.TypeInfo
+	plug.TypeInfo
 	Requests  []plug.MethodInfo
 	Responses []plug.MethodInfo
 	Failures  []plug.MethodInfo
@@ -284,20 +283,6 @@ func (p page) methodURL(name string) string {
 
 func (p page) typeURL(name string) string {
 	return p.root + "types/" + url.PathEscape(name)
-}
-
-func (p page) lines(source string) []line {
-	lines := strings.Split(source, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	result := make([]line, 0, len(lines))
-	for _, src := range lines {
-		result = append(result, line{
-			Tokens: p.tokens(src),
-		})
-	}
-	return result
 }
 
 func (p page) tokens(source string) []token {
@@ -378,10 +363,6 @@ func (p page) tokens(source string) []token {
 	return result
 }
 
-type line struct {
-	Tokens []token
-}
-
 type token struct {
 	Text  string
 	Class string
@@ -406,7 +387,7 @@ func (b *browser) serveMethod(w http.ResponseWriter, r *http.Request) {
 		browser: b,
 		origin:  requestOrigin(r),
 		root:    "../",
-		title:   m.Info.Name,
+		title:   m.Name,
 	}, m))
 }
 
@@ -420,7 +401,7 @@ func (b *browser) serveType(w http.ResponseWriter, r *http.Request) {
 	b.render(w, r, typePage(page{
 		browser: b,
 		root:    "../",
-		title:   typ.Info.Name,
+		title:   typ.Name,
 	}, typ))
 }
 

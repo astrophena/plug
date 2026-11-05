@@ -410,25 +410,6 @@ td:first-child {
 .json-representation {
   margin-bottom: 30px;
 }
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.guide-card {
-  padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--code);
-}
-.guide-card h3 {
-  margin: 0 0 7px;
-  font-size: 15px;
-}
-.guide-card p {
-  margin: 7px 0 0;
-  color: var(--ink-soft);
-}
 .reference-details {
   margin: 14px 0 20px;
   padding: 12px 15px;
@@ -471,51 +452,6 @@ td:first-child {
   display: grid;
   gap: 9px;
   margin: 12px 0 4px;
-}
-.easter-egg-hint {
-  margin-top: 20px;
-  font-size: 13px;
-  font-style: italic;
-}
-.protocol-map {
-  margin: 28px 0 36px;
-}
-.protocol-map pre {
-  overflow-x: auto;
-  margin: 0;
-  padding: 18px 20px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--code);
-  font: 13px/1.5 "JetBrains Mono", monospace;
-  white-space: pre;
-}
-.protocol-map figcaption {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.protocol-steps {
-  margin: 0;
-  padding-left: 28px;
-}
-.protocol-steps li {
-  padding: 2px 0 8px 8px;
-}
-.protocol-steps h3 {
-  margin-bottom: 4px;
-}
-.survival-notes {
-  margin: 38px 0 28px;
-  padding: 4px 20px 16px;
-  border-left: 3px solid var(--blue);
-  background: var(--blue-soft);
-}
-.survival-notes h2 {
-  margin-top: 20px;
-}
-.survival-notes li + li {
-  margin-top: 6px;
 }
 .no-js .browser-filter,
 .no-js .try-request,
@@ -595,8 +531,7 @@ td:first-child {
     font-size: 29px;
   }
   .grid,
-  .callouts,
-  .guide-grid {
+  .callouts {
     grid-template-columns: 1fr;
   }
   .identity-list div,

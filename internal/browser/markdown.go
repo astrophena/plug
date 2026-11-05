@@ -27,8 +27,9 @@ func (b *browser) markdown(origin string) string {
 	if b.schema.Documentation != "" {
 		fmt.Fprintf(&sb, "%s\n\n", b.docMarkdown(b.schema.Documentation))
 	}
-	fmt.Fprintf(&sb, "Package: `%s`  \nPlug version: `%d`\n\n", b.schema.Package, b.schema.Major)
-	sb.WriteString("This document describes the Plug service contract. HTTP routes are available only where listed. The deployment handles authentication and may restrict access to public methods.\n\n")
+	fmt.Fprintf(&sb, "Package: `%s`  \nSchema version: `%d`\n\n", b.schema.Package, b.schema.Major)
+	sb.WriteString("A private method requires an authenticated caller with its declared permission. " +
+		"The server may also require authentication for public methods.\n\n")
 
 	if len(b.schema.Categories) > 0 {
 		sb.WriteString("## Categories\n\n")
@@ -68,22 +69,45 @@ func (b *browser) markdown(origin string) string {
 
 	if b.httpRoutes > 0 {
 		sb.WriteString("## HTTP conventions\n\n")
-		sb.WriteString("GET and DELETE use path and query values. Other verbs also accept JSON. Path and query values take precedence. Repeat query parameters for lists, encode bytes as base64, and omit optional values. Records use field names as JSON keys; sums use `type` for the constructor, including fieldless variants. Empty lists use `[]` and empty bytes use `\"\"`. Absent optional fields are omitted; input also accepts `null`. Integers are numbers, so JavaScript may lose precision for large 64-bit values. An absent optional result returns HTTP 200 with `null`. A `void` result returns 204 No Content. Errors contain `code` and `message`; declared errors also contain `details`.\n\n")
+		sb.WriteString("HTTP routes call the same handlers as native Plug requests.\n\n" +
+			"### Requests\n\n" +
+			"For GET and DELETE, supply fields in the path and query. " +
+			"Other verbs can also read fields from a JSON body.\n\n" +
+			"When a field is supplied in more than one place, query values override the body " +
+			"and path values override both. Repeat a query parameter for each list element.\n\n" +
+			"### JSON values\n\n" +
+			"Records use schema field names as JSON keys. " +
+			"A sum also has a `type` field containing its constructor name.\n\n" +
+			"Encode bytes as a base64 string, using `\"\"` for empty bytes. " +
+			"An empty list is `[]`.\n\n" +
+			"Omit an optional field when its value is absent. " +
+			"JSON input also accepts `null` for an absent value.\n\n" +
+			"### Responses\n\n" +
+			"Successful calls return JSON. A `void` result returns 204 No Content with an empty body.\n\n" +
+			"Error responses contain `code` and `message`. " +
+			"Declared errors also contain `details` with their schema fields.\n\n" +
+			"See the [HTTP reference](https://github.com/astrophena/plug/tree/master/docs/http.md) " +
+			"for route patterns, status codes, and generated clients.\n\n")
 	}
 	sb.WriteString("## Plug protocol\n\n")
-	sb.WriteString("Plug runs over an ordered byte stream. A client sends `PLUG`, the wire version, and schema identity. Each request frame carries a request ID, method ID, and encoded fields. The server decodes, authorizes, and invokes the handler, then returns a response, declared error, or core error. Native and HTTP calls use the same handlers.\n\n")
-	sb.WriteString("The inspection handshake returns the wire version, schema hashes, and canonical source. Compatible schemas may add declarations, sum constructors, and optional tail fields. See the [full protocol](https://github.com/astrophena/plug/tree/master/docs/protocol.md).\n\n")
+	sb.WriteString("Before making calls, the client and server exchange a schema handshake to check compatibility. " +
+		"Each request then travels in a frame with a method ID and a request ID.\n\n" +
+		"The server includes the request ID in its response so the client can match it to the call. " +
+		"Several calls may be active at once, and responses may arrive out of order.\n\n" +
+		"An inspection connection returns the schema and closes without making calls.\n\n" +
+		"When a client cancels a call, the server asks the handler to stop and discards its response.\n\n" +
+		"See the [wire protocol](https://github.com/astrophena/plug/tree/master/docs/protocol.md).\n\n")
 
 	sb.WriteString("## Wire identity\n\n")
 	fmt.Fprintf(&sb, "- Family: `%s`\n- Fingerprint: `%s`\n\n", fingerprint(b.schema.Family), fingerprint(b.schema.Fingerprint))
-	sb.WriteString("Package and version define compatibility. The fingerprint identifies this schema. New declarations and optional tail fields are compatible; other changes need a new version.\n\n")
+	sb.WriteString("The family identifies the package and major version. The fingerprint identifies its declarations.\n\n")
 	sb.WriteString("## Canonical schema\n\n")
 	markdownCode(&sb, b.schema.Source)
 	return sb.String()
 }
 
 func (b *browser) markdownMethod(sb *strings.Builder, method method, origin string) {
-	info := method.Info
+	info := method.MethodInfo
 	fmt.Fprintf(sb, "<a id=\"method-%s\"></a>\n\n", info.Name)
 	fmt.Fprintf(sb, "### `%s`\n\n", info.Name)
 	if info.Documentation != "" {
@@ -118,7 +142,7 @@ func (b *browser) markdownMethod(sb *strings.Builder, method method, origin stri
 		if len(example.Fields) > 0 {
 			sb.WriteString("Request mapping:\n\n")
 			for _, field := range example.Fields {
-				fmt.Fprintf(sb, "- `%s` (`%s`): %s, %s.\n", field.Info.Name, typeSyntax(field.Info.Type), field.Location, field.Representation)
+				fmt.Fprintf(sb, "- `%s` (`%s`): %s, %s.\n", field.Name, typeSyntax(field.Type), field.Location, field.Representation)
 			}
 			sb.WriteByte('\n')
 		} else {
@@ -137,13 +161,13 @@ func (b *browser) markdownMethod(sb *strings.Builder, method method, origin stri
 		}
 	}
 	if len(info.HTTP) > 0 && info.Error != "" {
-		sb.WriteString("Declared errors use an envelope with `code`, `message`, and `details`. Example:\n\n")
+		sb.WriteString("Declared errors return JSON with `code`, `message`, and `details`. Example:\n\n")
 		markdownCode(sb, b.exampleErrorJSON(info.Error))
 	}
 }
 
 func (b *browser) markdownType(sb *strings.Builder, typ typeDoc) {
-	info := typ.Info
+	info := typ.TypeInfo
 	fmt.Fprintf(sb, "<a id=\"type-%s\"></a>\n\n", info.Name)
 	fmt.Fprintf(sb, "### `%s` (%s)\n\n", info.Name, typeKind(info))
 	if info.Documentation != "" {
@@ -178,7 +202,7 @@ func (b *browser) markdownType(sb *strings.Builder, typ typeDoc) {
 			fmt.Fprintf(sb, "- Returned by `%s`\n", method.Name)
 		}
 		for _, method := range typ.Failures {
-			fmt.Fprintf(sb, "- Thrown by `%s`\n", method.Name)
+			fmt.Fprintf(sb, "- Returned as an error by `%s`\n", method.Name)
 		}
 		for _, owner := range typ.Types {
 			fmt.Fprintf(sb, "- Referenced by type `%s`\n", owner.Name)

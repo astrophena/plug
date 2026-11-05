@@ -28,7 +28,7 @@ type httpExample struct {
 }
 
 type httpField struct {
-	Info           plug.FieldInfo
+	plug.FieldInfo
 	Location       string
 	Representation string
 }
@@ -97,7 +97,7 @@ func (b *browser) httpFields(binding plug.HTTPBindingInfo, fields []plug.FieldIn
 	result := make([]httpField, 0, len(fields))
 	for _, field := range fields {
 		item := httpField{
-			Info: field,
+			FieldInfo: field,
 		}
 		switch {
 		case pathFields[field.Name]:
@@ -161,8 +161,8 @@ func (b *browser) exampleText(expr plug.TypeExpr) string {
 	if expr.Kind == plug.TypeExprList && expr.Element != nil {
 		return b.exampleText(*expr.Element)
 	}
-	if typ, ok := b.typeByName[expr.Name]; ok && typ.Info.Kind == plug.TypeNewtype {
-		expr.Name = typ.Info.Underlying
+	if typ, ok := b.typeByName[expr.Name]; ok && typ.Kind == plug.TypeNewtype {
+		expr.Name = typ.Underlying
 	}
 	switch expr.Name {
 	case "bool":
@@ -214,13 +214,13 @@ func (b *browser) exampleResponseJSON(response plug.TypeExpr) string {
 
 func (b *browser) exampleErrorJSON(typeName string) string {
 	typ, ok := b.typeByName[typeName]
-	if !ok || len(typ.Info.Constructors) == 0 {
+	if !ok || len(typ.Constructors) == 0 {
 		return ""
 	}
 	return marshalExampleJSON(jsonObject{
 		{
 			Name:  "code",
-			Value: typ.Info.Constructors[0].Name,
+			Value: typ.Constructors[0].Name,
 		},
 		{
 			Name:  "message",
@@ -263,18 +263,18 @@ func (b *browser) exampleValue(expr plug.TypeExpr) any {
 	if !ok {
 		return "example"
 	}
-	if typ.Info.Kind == plug.TypeNewtype {
+	if typ.Kind == plug.TypeNewtype {
 		return b.exampleValue(plug.TypeExpr{
 			Kind: plug.TypeExprPrimitive,
-			Name: typ.Info.Underlying,
+			Name: typ.Underlying,
 		})
 	}
-	if len(typ.Info.Constructors) == 0 {
+	if len(typ.Constructors) == 0 {
 		return jsonObject{}
 	}
-	constructor := typ.Info.Constructors[0]
+	constructor := typ.Constructors[0]
 	value := make(jsonObject, 0, len(constructor.Fields)+1)
-	if typ.Info.Kind == plug.TypeSum {
+	if typ.Kind == plug.TypeSum {
 		value = append(value, jsonField{
 			Name:  "type",
 			Value: constructor.Name,

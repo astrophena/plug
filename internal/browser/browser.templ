@@ -6,6 +6,7 @@ package browser
 
 import (
 	"strconv"
+	"strings"
 
 	"go.astrophena.name/base/web"
 	"go.astrophena.name/plug"
@@ -59,7 +60,7 @@ templ indexPage(page page) {
 			}
 			<div class="stats">
 				<span class="badge">Package { page.browser.schema.Package }</span>
-				<span class="badge">Plug version { strconv.Itoa(int(page.browser.schema.Major)) }</span>
+				<span class="badge">Schema version { strconv.Itoa(int(page.browser.schema.Major)) }</span>
 				<span class="badge">{ strconv.Itoa(len(page.browser.methods)) } methods</span>
 				<span class="badge">{ strconv.Itoa(len(page.browser.types)) } types</span>
 				if page.browser.httpRoutes > 0 {
@@ -117,7 +118,7 @@ templ indexPage(page page) {
 		if len(page.browser.schema.Permissions) > 0 {
 			<section>
 				<h2>Permissions</h2>
-				<p>Methods can require these permissions. The deployment handles authentication.</p>
+				<p>A private method requires an authenticated caller with its declared permission. The server may also require authentication for public methods.</p>
 				<ul class="permission-list">
 					for _, permission := range page.browser.schema.Permissions {
 						<li>
@@ -133,7 +134,7 @@ templ indexPage(page page) {
 			</section>
 		}
 		if page.browser.httpRoutes > 0 {
-			@httpGuide(page)
+			@httpGuide()
 		}
 		<section id="schema">
 			<h2>Schema</h2>
@@ -145,7 +146,7 @@ templ indexPage(page page) {
 					<div><dt>Family</dt><dd><code>{ fingerprint(page.browser.schema.Family) }</code></dd></div>
 					<div><dt>Fingerprint</dt><dd><code>{ fingerprint(page.browser.schema.Fingerprint) }</code></dd></div>
 				</dl>
-				<p>Package and version define compatibility. The fingerprint identifies this schema. New declarations and optional tail fields are compatible. Other changes need a new version.</p>
+				<p>The family identifies the package and major version. The fingerprint identifies its declarations. See the <a href="https://github.com/astrophena/plug/tree/master/docs/schema.md#compatible-evolution">compatibility rules</a> before changing a schema.</p>
 			</details>
 			@code(page, page.browser.schema.Source)
 		</section>
@@ -154,49 +155,13 @@ templ indexPage(page page) {
 
 templ protocolPage(page page) {
 	@layout(page) {
-		<div class="eyebrow">Protocol</div>
 		<h1>Plug protocol</h1>
-		<p class="lead">Plug runs over an ordered byte stream.</p>
-		<figure class="protocol-map">
-			<pre><code>{ protocolMap }</code></pre>
-			<figcaption>Native and HTTP calls use the same handlers.</figcaption>
-		</figure>
-		<section>
-			<h2>Call flow</h2>
-			<ol class="protocol-steps">
-				<li>
-					<h3>Handshake</h3>
-					<p>The client sends <code>PLUG</code>, the wire version, and schema identity.</p>
-				</li>
-				<li>
-					<h3>Request</h3>
-					<p>A frame carries the request ID, method ID, and encoded fields.</p>
-				</li>
-				<li>
-					<h3>Dispatch</h3>
-					<p>The server decodes, authorizes, and invokes the handler.</p>
-				</li>
-				<li>
-					<h3>Result</h3>
-					<p>The server returns a response, declared error, or core error.</p>
-				</li>
-			</ol>
-		</section>
-		<section>
-			<h2>Inspect a server</h2>
-			<p>This script reads the schema from a Unix socket.</p>
-			<pre class="request-example"><code>{ protocolPython }</code></pre>
-			<p>The response contains the wire version, schema hashes, and source.</p>
-		</section>
-		<section>
-			<h2>Evolution</h2>
-			<p>Compatible schemas may add declarations, sum constructors, and optional tail fields. IDs stay stable, but the fingerprint changes.</p>
-		</section>
-		<section>
-			<h2>HTTP</h2>
-			<p>An <code>http</code> clause maps HTTP requests to a Plug method.</p>
-		</section>
-		<p><a href="https://github.com/astrophena/plug/tree/master/docs/protocol.md">Full protocol</a> · <a href={ page.homeURL() }>API</a></p>
+		<p>Plug carries calls over an ordered byte stream, such as a Unix socket, TCP connection, or HTTP Upgrade or WebSocket connection.</p>
+		<p>Before making calls, the client and server exchange a schema handshake to check compatibility. Each request then travels in a frame with a method ID and a request ID.</p>
+		<p>The server includes the request ID in its response so the client can match it to the call. Several calls may be active at once, and responses may arrive out of order.</p>
+		<p>An inspection connection returns the schema and closes without making calls.</p>
+		<p>When a client cancels a call, the server asks the handler to stop and discards its response.</p>
+		<p><a href="https://github.com/astrophena/plug/tree/master/docs/protocol.md">Wire protocol</a> · <a href="https://github.com/astrophena/plug/tree/master/docs/schema.md">Schema reference</a> · <a href="https://github.com/astrophena/plug/tree/master/docs/http.md">HTTP reference</a> · <a href={ page.homeURL() }>API</a></p>
 	}
 }
 
@@ -217,21 +182,21 @@ templ methodGrid(page page, methods []method) {
 		for _, method := range methods {
 			<article class="list-item" data-filter-item>
 				<div class="list-item-title">
-					<a href={ page.methodURL(method.Info.Name) }>{ method.Info.Name }</a>
+					<a href={ page.methodURL(method.Name) }>{ method.Name }</a>
 					<span class="kind">
-						if method.Info.Public {
+						if method.Public {
 							public
 						} else {
-							requires { method.Info.Permission }
+							requires { method.Permission }
 						}
 					</span>
 				</div>
-				if method.Info.Documentation != "" {
-					@docComment(page, method.Info.Documentation)
+				if method.Documentation != "" {
+					@docComment(page, method.Documentation)
 				}
-				if len(method.Info.HTTP) > 0 {
+				if len(method.HTTP) > 0 {
 					<ul class="method-routes" aria-label="HTTP routes">
-						for _, binding := range method.Info.HTTP {
+						for _, binding := range method.HTTP {
 							<li><span class="verb">{ binding.Verb }</span><code>{ binding.Path }</code></li>
 						}
 					</ul>
@@ -258,11 +223,11 @@ templ typeGrid(page page, types []typeDoc) {
 		for _, typ := range types {
 			<article class="list-item" data-filter-item>
 				<div class="list-item-title">
-					<a href={ page.typeURL(typ.Info.Name) }>{ typ.Info.Name }</a>
-					<span class="kind">{ typeKind(typ.Info) }</span>
+					<a href={ page.typeURL(typ.Name) }>{ typ.Name }</a>
+					<span class="kind">{ typeKind(typ.TypeInfo) }</span>
 				</div>
-				if typ.Info.Documentation != "" {
-					@docComment(page, typ.Info.Documentation)
+				if typ.Documentation != "" {
+					@docComment(page, typ.Documentation)
 				}
 			</article>
 		}
@@ -272,39 +237,39 @@ templ typeGrid(page page, types []typeDoc) {
 templ methodPage(page page, method method) {
 	@layout(page) {
 		<div class="eyebrow">Method</div>
-		<h1>{ method.Info.Name }</h1>
-		if method.Info.Documentation != "" {
+		<h1>{ method.Name }</h1>
+		if method.Documentation != "" {
 			<div class="lead">
-				@docComment(page, method.Info.Documentation)
+				@docComment(page, method.Documentation)
 			</div>
 		}
 		<div class="meta">
-			<span>Method ID <code>{ hexID(method.Info.ID) }</code></span>
-			if method.Info.Public {
+			<span>Method ID <code>{ hexID(method.ID) }</code></span>
+			if method.Public {
 				<span>Access <code>public</code></span>
 			} else {
-				<span>Permission <code>{ method.Info.Permission }</code></span>
+				<span>Permission <code>{ method.Permission }</code></span>
 			}
 		</div>
-		if method.Info.Public {
-			<p class="muted"><code>public</code> requires no Plug permission. The deployment may still restrict access.</p>
+		if method.Public {
+			<p class="muted"><code>public</code> requires no Plug permission. The server may still require authentication.</p>
 		}
 		<h2>Declaration</h2>
-		@code(page, methodDeclaration(method.Info))
-		if len(method.Info.Fields) > 0 {
+		@code(page, methodDeclaration(method.MethodInfo))
+		if len(method.Fields) > 0 {
 			<h2>Parameters</h2>
 			<table>
 				<thead>
 					<tr>
 						<th>Name</th>
 						<th>Type</th>
-						if hasDocs(method.Info.Fields) {
+						if hasDocs(method.Fields) {
 							<th>Description</th>
 						}
 					</tr>
 				</thead>
 				<tbody>
-					for _, field := range method.Info.Fields {
+					for _, field := range method.Fields {
 						<tr>
 							<td>
 								@fieldName(field)
@@ -312,7 +277,7 @@ templ methodPage(page page, method method) {
 							<td>
 								@typeCode(page, typeSyntax(field.Type))
 							</td>
-							if hasDocs(method.Info.Fields) {
+							if hasDocs(method.Fields) {
 								<td>
 									@docComment(page, field.Documentation)
 								</td>
@@ -324,13 +289,13 @@ templ methodPage(page page, method method) {
 		}
 		<h2>Result</h2>
 		<p>
-			@typeCode(page, typeSyntax(method.Info.Response))
+			@typeCode(page, typeSyntax(method.Response))
 		</p>
-		if method.Info.Error != "" {
+		if method.Error != "" {
 			<h2>Declared errors</h2>
 			<p>
 				{ "Returns " }
-				@templ.Join(typeCode(page, method.Info.Error), templ.Raw("."))
+				@templ.Join(typeCode(page, method.Error), templ.Raw("."))
 			</p>
 			<details class="reference-details">
 				<summary>{ strconv.Itoa(len(method.Errors)) } constructors with HTTP status</summary>
@@ -356,10 +321,10 @@ templ methodPage(page page, method method) {
 				</table>
 			</details>
 		}
-		if len(method.Info.HTTP) > 0 {
+		if len(method.HTTP) > 0 {
 			<h2>HTTP</h2>
 			<p>These routes call the same method and return JSON.</p>
-			for _, example := range page.browser.httpExamples(method.Info, page.origin) {
+			for _, example := range page.browser.httpExamples(method.MethodInfo, page.origin) {
 				<article class="http-example">
 					<div class="route"><span class="verb">{ example.Binding.Verb }</span><code>{ example.Binding.Path }</code></div>
 					if len(example.Fields) == 0 {
@@ -372,7 +337,7 @@ templ methodPage(page page, method method) {
 								for _, field := range example.Fields {
 									<tr>
 										<td>
-											@fieldName(field.Info)
+											@fieldName(field.FieldInfo)
 										</td>
 										<td>{ field.Location }</td>
 										<td>{ field.Representation }</td>
@@ -416,10 +381,10 @@ templ methodPage(page page, method method) {
 					</details>
 				</article>
 			}
-			if method.Info.Error != "" {
-				<h3>Error envelope</h3>
+			if method.Error != "" {
+				<h3>Error response</h3>
 				<p><code>code</code> names the constructor. <code>details</code> contains the error value.</p>
-				<pre class="json-example"><code>{ page.browser.exampleErrorJSON(method.Info.Error) }</code></pre>
+				<pre class="json-example"><code>{ page.browser.exampleErrorJSON(method.Error) }</code></pre>
 			}
 		}
 	}
@@ -427,17 +392,17 @@ templ methodPage(page page, method method) {
 
 templ typePage(page page, typ typeDoc) {
 	@layout(page) {
-		<div class="eyebrow">{ typeKind(typ.Info) }</div>
-		<h1>{ typ.Info.Name }</h1>
-		if typ.Info.Documentation != "" {
+		<div class="eyebrow">{ typeKind(typ.TypeInfo) }</div>
+		<h1>{ typ.Name }</h1>
+		if typ.Documentation != "" {
 			<div class="lead">
-				@docComment(page, typ.Info.Documentation)
+				@docComment(page, typ.Documentation)
 			</div>
 		}
 		<h2>Declaration</h2>
-		for _, declaration := range typeDeclarations(typ.Info) {
+		for _, declaration := range typeDeclarations(typ.TypeInfo) {
 			<article class="definition">
-				if declaration.Documentation != "" && declaration.Documentation != typ.Info.Documentation {
+				if declaration.Documentation != "" && declaration.Documentation != typ.Documentation {
 					@docComment(page, declaration.Documentation)
 				}
 				if declaration.ID != 0 {
@@ -484,16 +449,16 @@ templ typePage(page page, typ typeDoc) {
 		if page.browser.httpRoutes > 0 {
 			<section class="json-representation">
 				<h2>JSON</h2>
-				if typ.Info.Error {
+				if typ.Error {
 					<p>Error values appear in <code>details</code>.</p>
-				} else if typ.Info.Kind == plug.TypeSum {
+				} else if typ.Kind == plug.TypeSum {
 					<p>The <code>type</code> field contains the constructor name.</p>
-				} else if typ.Info.Kind == plug.TypeNewtype {
+				} else if typ.Kind == plug.TypeNewtype {
 					<p>Newtypes use their underlying scalar.</p>
 				} else {
 					<p>Records use schema field names as JSON keys.</p>
 				}
-				<pre class="json-example"><code>{ page.browser.exampleTypeJSON(typ.Info) }</code></pre>
+				<pre class="json-example"><code>{ page.browser.exampleTypeJSON(typ.TypeInfo) }</code></pre>
 			</section>
 		}
 		if len(typ.Requests) > 0 || len(typ.Responses) > 0 || len(typ.Failures) > 0 || len(typ.Types) > 0 {
@@ -506,7 +471,7 @@ templ typePage(page page, typ typeDoc) {
 					@methodLinks(page, "Returned by", typ.Responses)
 				}
 				if len(typ.Failures) > 0 {
-					@methodLinks(page, "Thrown by", typ.Failures)
+					@methodLinks(page, "Returned as an error by", typ.Failures)
 				}
 				if len(typ.Types) > 0 {
 					<div class="callout">
@@ -523,49 +488,22 @@ templ typePage(page page, typ typeDoc) {
 	}
 }
 
-templ httpGuide(page page) {
+templ httpGuide() {
 	<section id="http">
 		<h2>HTTP</h2>
-		<p>HTTP routes use the same handlers as native calls.</p>
-		<div class="guide-grid">
-			<article class="guide-card">
-				<h3>Requests</h3>
-				<p><code>GET</code> and <code>DELETE</code> use path and query values. Other verbs also accept JSON. Path and query values take precedence.</p>
-			</article>
-			<article class="guide-card">
-				<h3>Query encoding</h3>
-				<p>Repeat a parameter for lists. Bytes use base64. Omit optional values.</p>
-			</article>
-			<article class="guide-card">
-				<h3>JSON values</h3>
-				<p>Records use field names. Sums store the constructor in <code>"type"</code>, including variants without fields. Integers are numbers; JavaScript may lose precision for large 64-bit values.</p>
-				<p>Empty lists use <code>[]</code> and empty bytes use <code>""</code>. Absent optional fields are omitted; input also accepts <code>null</code>.</p>
-			</article>
-			<article class="guide-card">
-				<h3>Responses</h3>
-				<p>Results use JSON. <code>void</code> returns <code>204 No Content</code>.</p>
-			</article>
-			<article class="guide-card">
-				<h3>Access</h3>
-				<p>Plug permissions apply. The deployment handles authentication.</p>
-			</article>
-			<article class="guide-card">
-				<h3>Errors</h3>
-				<p>Errors contain <code>code</code> and <code>message</code>. Declared errors also contain <code>details</code>.</p>
-			</article>
-		</div>
-		<h3>HTTP errors</h3>
-		<table>
-			<thead><tr><th>Code</th><th>Status</th><th>Meaning</th></tr></thead>
-			<tbody>
-				<tr><td><code>bad_request</code></td><td>400</td><td>The request does not match the Plug type.</td></tr>
-				<tr><td><code>unauthenticated</code></td><td>401</td><td>No principal is available.</td></tr>
-				<tr><td><code>permission_denied</code></td><td>403</td><td>The principal lacks the permission.</td></tr>
-				<tr><td><code>unimplemented</code></td><td>501</td><td>No handler is registered.</td></tr>
-				<tr><td><code>internal</code></td><td>500</td><td>The server failed without a declared error.</td></tr>
-			</tbody>
-		</table>
-		<pre class="json-example"><code>{ "{\n  \"code\": \"bad_request\",\n  \"message\": \"field limit: parse integer\"\n}" }</code></pre>
+		<p>HTTP routes call the same handlers as native Plug requests.</p>
+		<p>A private method requires an authenticated caller with its declared permission. The server may also require authentication for public methods.</p>
+		<h3>Requests</h3>
+		<p>For <code>GET</code> and <code>DELETE</code>, supply fields in the path and query. Other verbs can also read fields from a JSON body.</p>
+		<p>When a field is supplied in more than one place, query values override the body and path values override both. Repeat a query parameter for each list element.</p>
+		<h3>JSON values</h3>
+		<p>Records use schema field names as JSON keys. A sum also has a <code>type</code> field containing its constructor name.</p>
+		<p>Encode bytes as a base64 string, using <code>""</code>{ " for empty bytes. An empty list is " }<code>[]</code>.</p>
+		<p>Omit an optional field when its value is absent. JSON input also accepts <code>null</code>{ " for an absent value." }</p>
+		<h3>Responses</h3>
+		<p>Successful calls return JSON. A <code>void</code> result returns <code>204 No Content</code> with an empty body.</p>
+		<p>Error responses contain <code>code</code> and <code>message</code>. Declared errors also contain <code>details</code> with their schema fields.</p>
+		<p>See the <a href="https://github.com/astrophena/plug/tree/master/docs/http.md">HTTP reference</a>{ " for route patterns, status codes, and generated clients." }</p>
 	</section>
 }
 
@@ -613,10 +551,12 @@ templ methodLinks(page page, title string, methods []plug.MethodInfo) {
 
 templ code(page page, source string) {
 	<div class="schema-code">
-		for _, line := range page.lines(source) {
-			<span class="schema-line">
-				@tokens(line.Tokens)
-			</span>
+		if source != "" {
+			for line := range strings.SplitSeq(strings.TrimSuffix(source, "\n"), "\n") {
+				<span class="schema-line">
+					@tokens(page.tokens(line))
+				</span>
+			}
 		}
 	</div>
 }

@@ -13,14 +13,14 @@ import (
 )
 
 // NewBrowser returns a schema browser with HTML pages and an index.md download.
-// Mount it with [http.StripPrefix] and serve its assets with [web.Server] and
-// [StaticFS]:
+// Mount it with [http.StripPrefix] and serve its assets with a [web.Server]
+// configured with [StaticFS]:
 //
 //	mux.Handle("/docs/", http.StripPrefix("/docs", browser))
 //
-// It reports invalid schemas and categories as errors.
+// [web.Server]: https://pkg.go.dev/go.astrophena.name/base/web#Server
 func NewBrowser(schema *plug.Schema) (http.Handler, error) { return browser.New(schema) }
 
 // StaticFS combines files with the browser assets. Earlier files take precedence.
-// Pass the result to [web.Server.StaticFS].
+// Pass the result to web.Server.StaticFS.
 func StaticFS(files ...fs.FS) fs.FS { return browser.StaticFS(files...) }
