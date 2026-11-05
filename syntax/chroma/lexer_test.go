@@ -41,68 +41,24 @@ greeter.console -> raw
 	}
 
 	wants := []chroma.Token{
-		{
-			Type:  chroma.CommentSingle,
-			Value: "// A user lookup.",
-		},
-		{
-			Type:  chroma.Keyword,
-			Value: "package",
-		},
-		{
-			Type:  chroma.Keyword,
-			Value: "category",
-		},
-		{
-			Type:  chroma.NumberInteger,
-			Value: "1",
-		},
-		{
-			Type:  chroma.NameFunction,
-			Value: "user.read",
-		},
-		{
-			Type:  chroma.NameClass,
-			Value: "UserID",
-		},
-		{
-			Type:  chroma.KeywordType,
-			Value: "i64",
-		},
-		{
-			Type:  chroma.NameFunction,
-			Value: "user",
-		},
-		{
-			Type:  chroma.NameAttribute,
-			Value: "id",
-		},
-		{
-			Type:  chroma.KeywordType,
-			Value: "list",
-		},
-		{
-			Type:  chroma.KeywordType,
-			Value: "raw",
-		},
-		{
-			Type:  chroma.Operator,
-			Value: "->",
-		},
-		{
-			Type:  chroma.NameBuiltin,
-			Value: "GET",
-		},
-		{
-			Type:  chroma.StringDouble,
-			Value: `"/v1/users/{id}"`,
-		},
+		{Type: chroma.CommentSingle, Value: "// A user lookup."},
+		{Type: chroma.Keyword, Value: "package"},
+		{Type: chroma.Keyword, Value: "category"},
+		{Type: chroma.NumberInteger, Value: "1"},
+		{Type: chroma.NameFunction, Value: "user.read"},
+		{Type: chroma.NameClass, Value: "UserID"},
+		{Type: chroma.KeywordType, Value: "i64"},
+		{Type: chroma.NameFunction, Value: "user"},
+		{Type: chroma.NameAttribute, Value: "id"},
+		{Type: chroma.KeywordType, Value: "list"},
+		{Type: chroma.KeywordType, Value: "raw"},
+		{Type: chroma.Operator, Value: "->"},
+		{Type: chroma.NameBuiltin, Value: "GET"},
+		{Type: chroma.StringDouble, Value: `"/v1/users/{id}"`},
 	}
 	for _, want := range wants {
-		if !hasToken(tokens, want) {
+		if !slices.Contains(tokens, want) {
 			t.Errorf("tokens do not contain %#v:\n%#v", want, tokens)
 		}
 	}
 }
-
-func hasToken(tokens []chroma.Token, want chroma.Token) bool { return slices.Contains(tokens, want) }
