@@ -52,7 +52,7 @@ func NewParser(s *plug.Schema) *Parser {
 // Name, with empty ImportPath and Recv fields.
 func (p *Parser) Parse(text string) *comment.Doc { return p.parse(text, false) }
 
-// Comment formats text with schema references lowered to plain names.
+// Comment replaces schema references with plain names and formats the text.
 // Explicit URL links and preformatted text retain their syntax.
 func (p *Parser) Comment(text string) string { return printComment(p.parse(text, true)) }
 

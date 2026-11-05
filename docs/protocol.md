@@ -1,17 +1,15 @@
 # Plug protocol (version 1)
 
-## Status
-
-This document defines version 1 of the native Plug wire protocol. The schema
-language is specified separately in [schema.md](schema.md).
+Plug runs over a reliable, ordered byte stream, such as a Unix or TCP socket.
+The [schema specification](schema.md) defines service declarations.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** are to be interpreted as described by
 [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-Plug runs over a reliable, ordered byte stream such as a Unix or TCP stream
-socket. Encryption, peer identity, retries, discovery, and connection pooling
-are outside the protocol.
+Encryption, credentials, retries, discovery, and connection pooling are outside
+the protocol. Version 1 has no framed streaming or server push. HTTP bindings
+are described in the [HTTP reference](http.md).
 
 ## Notation
 
@@ -28,32 +26,47 @@ This document uses these field types:
 Lengths count bytes, not characters. Unless stated otherwise, integers have no
 padding and variable fields immediately follow the preceding field.
 
+## Schema identity
+
+Plug assigns three kinds of identity.
+
+The compatibility family is:
+
+```text
+SHA-256(package name || 00 || decimal version)
+```
+
+A constructor ID is the IEEE CRC-32 of:
+
+```plug
+package.constructor requiredField:type ... = Result
+```
+
+A method ID is the IEEE CRC-32 of:
+
+```plug
+group.method requiredField:type ... -> Response [throws Error]
+```
+
+Only the required field prefix participates in these IDs. Appending optional
+fields does not change dispatch. A schema is invalid if any constructor and
+method IDs collide.
+
+The exact fingerprint is SHA-256 over sorted normalized declarations. It
+includes package and version, permissions, newtype bases, every field, access
+rules, HTTP bindings, and error HTTP statuses. It excludes documentation,
+categories, and presentation whitespace.
+
+Native handshakes compare the first 16 bytes of these hashes. Runtime metadata
+and inspection retain all 32 bytes.
+
 ## Connection handshake
 
 Every connection begins with a client hello and a server hello.
 
-```text
-Client                                      Server
-  |                                           |
-  |------------- ClientHello ---------------->|
-  |                                           |
-  |<------------ ServerHello -----------------|
-  |                                           |
-  |       frames, or close after description  |
-```
-
 ### Client hello
 
 A client making calls MUST send a 38-byte call hello:
-
-```text
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-------+---+---+-------------------------------+-------------------
-| PLUG  |ver|flg| family SHA-256 prefix (16 B)  | fingerprint ...
-+-------+---+---+-------------------------------+-------------------
-  bytes 0..3    bytes 6..21                       bytes 22..37
-```
 
 | Offset | Size | Field                                   |
 | -----: | ---: | --------------------------------------- |
@@ -69,8 +82,7 @@ bit 2 requests Zstandard frame compression. All other bits MUST be zero.
 An inspection hello ends after byte 5. It is therefore six bytes long, MUST set
 bit 0, and MUST NOT set bits 1 or 2. A call hello MUST NOT set bit 0.
 
-The family and fingerprint algorithms are defined by the
-[schema specification](schema.md#identity).
+See [schema identity](#schema-identity) for the hash algorithms.
 
 ### Server hello
 
@@ -107,11 +119,6 @@ connection. A server that does not support or permit compression MUST return
 `UnsupportedCompression`. Early version 1 servers reject the flag without a
 response, so a client MAY reconnect without compression. No method call has been
 sent at that point.
-
-### Handshake example
-
-The shortest successful exchange is 39 bytes: a 38-byte call hello followed by
-the byte `00`. The connection is then ready for frames.
 
 ## Frames
 
@@ -191,6 +198,39 @@ An empty successful response is:
 +-------- two bytes follow
 ```
 
+### Example from a schema export
+
+Generate `greeter.json` from the
+[greeter schema](../example/greeter/schema.plug) as described in the
+[export reference](schema-json.md). This Python script builds a client hello and
+a `greeter.ping` request using that file:
+
+```python
+import json
+import struct
+
+with open("greeter.json", encoding="utf-8") as f:
+    schema = json.load(f)
+
+if schema["format_version"] != 1 or schema["protocol_version"] != 1:
+    raise ValueError("unsupported Plug schema export")
+
+methods = {method["name"]: method for method in schema["methods"]}
+ping = methods["greeter.ping"]
+
+# A call hello with no optional connection flags.
+hello = (
+    b"PLUG"
+    + bytes([schema["protocol_version"], 0])
+    + bytes.fromhex(schema["family"])[:16]
+    + bytes.fromhex(schema["fingerprint"])[:16]
+)
+
+# Request 1 with no fields: six bytes follow the length prefix.
+request = bytes([6, 1, 1]) + struct.pack("<I", ping["id"])
+print(hello.hex(), request.hex())
+```
+
 ## Value encoding
 
 Frame payloads encode schema values as follows:
@@ -240,21 +280,8 @@ A client MAY have several requests active on the same connection. Writes MUST
 remain frame-aligned. The server MAY execute calls concurrently and return their
 responses out of order.
 
-For each request, the server performs these steps:
-
-```text
-decode request
-      |
-      v
-authorize, when required
-      |
-      v
-run handler
-      |
-      +---- success ----------> Response
-      +---- declared error ---> ApplicationError
-      +---- other failure ----> ProtocolError
-```
+The server decodes the request, authorizes it when required, and runs the
+handler. It sends a `Response`, `ApplicationError`, or `ProtocolError` frame.
 
 A client that abandons a call SHOULD send `Cancel`. The server MUST cancel the
 matching call when it receives that frame and MUST suppress a later response.
@@ -328,11 +355,5 @@ WebSocket carries the Plug byte stream, including the handshake and raw
 takeover. Peers MUST use binary messages and concatenate their payloads. Plug
 frames MAY span messages or share a message. Text messages are rejected.
 WebSocket ping and pong frames are outside the Plug stream.
-
-## Scope
-
-Version 1 has no framed streaming, server push, retries, or credential format.
-HTTP projection is an adapter described by the
-[schema specification](schema.md#http-bindings), not another Plug wire mode.
 
 [RFC 8878]: https://www.rfc-editor.org/rfc/rfc8878.html

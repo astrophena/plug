@@ -10,16 +10,5 @@ This directory contains syntax highlighting for Plug schemas and PlugScript.
   contents into a Vim runtime path, or add `plug/syntax/vim` to Vim's
   `runtimepath`.
 
-Schemas follow [`../docs/schema.md`](../docs/schema.md). PlugScript is described
-in [`../cmd/purl/doc.go`](../cmd/purl/doc.go). Run a saved script with:
-
-```sh
-$ purl -f channels.purl https://overseer.home.astrophena.name/plug
-```
-
-A `channels.purl` script can contain bindings, calls, and pipelines:
-
-```purl
-let channels = overseer.listChannels()
-channels | map(c => c.identity.id)
-```
+See the [schema reference](../docs/schema.md) and [Purl guide](../docs/purl.md)
+for the languages.

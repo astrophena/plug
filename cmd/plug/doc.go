@@ -9,22 +9,13 @@ Plug generates RPC bindings, checks schemas, and serves API documentation.
 
 	$ plug generate [-check] [-http-client|-ts|-json] -o OUTPUT SCHEMA.plug
 
-Generate native Go bindings by default. Use -http-client for a standalone Go
-HTTP client, -ts for TypeScript types and an HTTP client, or -json for the
-resolved schema:
-
-	$ plug generate -o greeter_plug.go schema.plug
-	$ plug generate -http-client -o client.go schema.plug
-	$ plug generate -ts -o client.ts schema.plug
-	$ plug generate -json -o schema.json schema.plug
-
-Choose one target. The Go HTTP client uses only the standard library. JSON
-includes resolved types, wire IDs, and handshake hashes.
+The default output is native Go bindings. Choose -http-client for a standalone
+Go HTTP client, -ts for TypeScript types and a fetch client, or -json for resolved
+types, wire IDs, and schema hashes. The Go HTTP client uses only the standard
+library.
 
 Generation replaces the output atomically. Add -check to report missing or
-stale output without writing:
-
-	$ plug generate -check -o greeter_plug.go schema.plug
+stale output without writing.
 
 # Browse documentation
 
@@ -42,8 +33,8 @@ Ctrl-C stops the server. Restart it after schema changes.
 	$ plug check OLD.plug NEW.plug
 
 Check whether the new schema is an additive replacement for the old one.
-Changes to required fields, access rules, or existing declarations can break
-compatibility. Optional extension fields and new declarations may be added.
+Add declarations, constructors to existing sums, and optional fields. Required
+fields, access rules, and existing HTTP bindings must stay unchanged.
 
 # Lint schemas
 
@@ -56,9 +47,8 @@ Successful checks print nothing.
 
 	$ plug inspect [-network NETWORK] ADDRESS
 
-Print the wire version, schema family, fingerprint, and canonical source.
-Inspection makes no method calls and uses a native Plug connection. The
-default network is unix:
+Print the wire version, schema hashes, and source over a native connection.
+The default network is unix:
 
 	$ plug inspect /run/greeter/plug.sock
 	$ plug inspect -network tcp localhost:9000

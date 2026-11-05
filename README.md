@@ -10,30 +10,39 @@ Plug provides schema-generated RPC for Go services.
 
 ## Documentation
 
-- [Internals](docs/internals.md)
-- [Protocol](docs/protocol.md)
-- [Schema JSON format](docs/schema-json.md)
-- [Schema specification](docs/schema.md)
-- [Using Plug](docs/intro.md)
+Start with [Using Plug](docs/intro.md) to build a service, or
+[Purl and PlugScript](docs/purl.md) to call an existing one.
+
+- [Schema reference](docs/schema.md): types, methods, permissions,
+  compatibility.
+- [HTTP](docs/http.md): JSON routes, generated clients, Upgrade and WebSocket.
+- [Wire protocol](docs/protocol.md): handshakes, frames, value encoding.
+- [Schema JSON export](docs/schema-json.md): resolved metadata for other tools.
+- [Internals](docs/internals.md): notes for changing the runtime and generator.
+
+## Tools
+
+Install the standalone commands with Go:
+
+```sh
+$ go install go.astrophena.name/plug/cmd/plug@latest
+$ go install go.astrophena.name/plug/cmd/purl@latest
+```
+
+The [service guide](docs/intro.md) shows how to add the generator to a Go
+module. Run `plug -help` or `purl -help` for command help.
 
 ## Development
 
-You need the latest version of [Go] installed.
+Use the latest version of Go
 
-First, clone the repository:
-
-```sh
-$ git clone https://github.com/astrophena/plug
-$ cd plug
-```
-
-To run the tests, run:
+Run the tests with:
 
 ```sh
 $ go test ./...
 ```
 
-To set up the Git pre-commit hook for development:
+Run the development checks and install the Git pre-commit hook with:
 
 ```sh
 $ go tool pre-commit

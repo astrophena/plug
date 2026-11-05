@@ -1,22 +1,16 @@
-# Schema JSON format (version 1)
+# Schema JSON export (version 1)
 
-The JSON export is a compiled description of a Plug service. It contains the
-resolved types, wire IDs, and handshake hashes needed to build clients or other
-generators. Consumers need a JSON reader and an implementation of the
-[Plug protocol](protocol.md); they do not need the schema parser, Go bindings,
-or this repository's sources.
+The JSON export describes a service's resolved types, wire IDs, and handshake
+hashes. Use it to build clients or generators without parsing `.plug` files.
+Calls use the [Plug protocol](protocol.md).
 
 ## Generate an export
 
 ```sh
 $ go tool plug generate -json -o greeter.json schema.plug
-$ go tool plug generate -json -check -o greeter.json schema.plug
 ```
 
-The input is parsed and validated using the same rules as Go generation. The
-output file is replaced atomically. `-check` compares the complete generated
-bytes with an existing file and fails if it is missing or stale, without writing
-it. `-json`, `-http-client`, and `-ts` are mutually exclusive.
+Add `-check` to check an existing file without writing it.
 
 The file is UTF-8 JSON, indented with two spaces and terminated by a newline.
 Object keys use lowercase snake_case. Every property described below is present,
@@ -26,43 +20,37 @@ always arrays, including `[]` when empty. The only conditional properties are
 
 ## Service object
 
-| Property           | JSON type | Meaning                                          |
-| ------------------ | --------- | ------------------------------------------------ |
-| `format_version`   | number    | Export format version, currently `1`.            |
-| `protocol_version` | number    | Native wire protocol version, currently `1`.     |
-| `package`          | string    | Schema namespace.                                |
-| `major`            | number    | Positive 16-bit schema compatibility generation. |
-| `family`           | string    | Complete compatibility-family SHA-256 hash.      |
-| `fingerprint`      | string    | Complete exact-schema SHA-256 hash.              |
-| `documentation`    | string    | Package documentation, or `""`.                  |
-| `permissions`      | array     | Permission objects.                              |
-| `types`            | array     | Named type objects.                              |
-| `categories`       | array     | Presentation categories.                         |
-| `methods`          | array     | RPC method objects.                              |
-
-The three versions are independent: `format_version` describes this JSON
-contract, `protocol_version` describes connection framing and value encoding,
-and `major` identifies the service's compatibility generation.
+| Property           | JSON type | Meaning                                      |
+| ------------------ | --------- | -------------------------------------------- |
+| `format_version`   | number    | Export format version, currently `1`.        |
+| `protocol_version` | number    | Native wire protocol version, currently `1`. |
+| `package`          | string    | Schema namespace.                            |
+| `major`            | number    | Schema major version (1–65535).              |
+| `family`           | string    | Complete compatibility-family SHA-256 hash.  |
+| `fingerprint`      | string    | Complete exact-schema SHA-256 hash.          |
+| `documentation`    | string    | Package documentation, or `""`.              |
+| `permissions`      | array     | Permission objects.                          |
+| `types`            | array     | Named type objects.                          |
+| `categories`       | array     | Documentation groups.                        |
+| `methods`          | array     | RPC method objects.                          |
 
 Hashes are 64-character lowercase hexadecimal strings. A consumer decodes them
 to 32 bytes and uses their first 16 bytes in a call hello. IDs are unsigned
-32-bit decimal JSON numbers. When used in protocol frames, IDs are encoded as
-four bytes in little-endian order. Consumers can use the exported IDs and hashes
-directly without implementing the
-[schema identity algorithms](schema.md#identity).
+32-bit numbers, encoded little-endian in frames. Use the exported IDs and hashes
+directly; the [protocol](protocol.md#schema-identity) describes their
+calculation.
 
 Permissions, named types, methods, and constructors within each type are sorted
 by schema name. HTTP bindings are sorted by verb, then path. Category order is
 preserved, while each category's members are sorted by name. Field arrays retain
 their declaration order, which is their wire encoding order.
 
-Source paths, source positions, generated Go names, and schema source text are
-absent. Names and documentation retain their schema meaning. Documentation
-strings contain normalized
+The export omits source paths, positions, Go names, and schema source text.
+Documentation strings contain normalized
 [Go doc comment syntax](schema.md#documentation-and-linting) without comment
 markers or a trailing newline. Schema references, link definitions, and
-indentation are preserved; references are not lowered to plain names as they are
-in generated binding comments.
+indentation are preserved; references are not replaced with plain names as in
+generated binding comments.
 
 ## Named types and fields
 
@@ -103,8 +91,7 @@ a list has `element` and no `name`:
 }
 ```
 
-This represents `list<User>?`. Consumers follow the object structure without
-parsing a schema expression.
+This represents `list<User>?`.
 
 | Kind          | Additional property | Meaning                                                                                |
 | ------------- | ------------------- | -------------------------------------------------------------------------------------- |
@@ -117,12 +104,7 @@ invalid in Plug schemas. `void` and `raw` occur only as non-optional method
 responses. All other validity rules come from the
 [schema specification](schema.md).
 
-Records, sums, newtypes, and application-error payloads keep their existing
-[value encoding](protocol.md#value-encoding). In particular, the constructor ID
-of an application error is carried by the frame, and its payload contains the
-fields directly.
-
-## Methods and presentation metadata
+## Methods and categories
 
 A method object contains:
 
@@ -145,51 +127,13 @@ A category object contains string `name` and `documentation`, plus `types` and
 the service's type and method arrays without category membership. Categories and
 documentation do not participate in wire identity.
 
-## Read an export independently
-
-For the [greeter example](../example/greeter/schema.plug), this Python code uses
-only the standard library and the exported file:
-
-```python
-import json
-import struct
-
-with open("greeter.json", encoding="utf-8") as f:
-    schema = json.load(f)
-
-if schema["format_version"] != 1 or schema["protocol_version"] != 1:
-    raise ValueError("unsupported Plug schema export")
-
-methods = {method["name"]: method for method in schema["methods"]}
-ping = methods["greeter.ping"]
-
-# A call hello with no optional connection flags.
-hello = (
-    b"PLUG"
-    + bytes([schema["protocol_version"], 0])
-    + bytes.fromhex(schema["family"])[:16]
-    + bytes.fromhex(schema["fingerprint"])[:16]
-)
-
-# Request 1 with no fields: six bytes follow the length prefix.
-request = bytes([6, 1, 1]) + struct.pack("<I", ping["id"])
-print(hello.hex(), request.hex())
-```
-
-Connection handling, response framing, and value codecs follow the protocol
-specification. The JSON export describes the service contract rather than
-carrying RPC values.
-
 ## Format compatibility
 
-Consumers should check `format_version` and `protocol_version` before using an
-export. They may ignore unknown object properties within a supported format
-version. Backward-compatible property additions retain `format_version`; changes
-to existing property meaning or representation require a new format version.
-Unsupported type kinds or primitive names require consumer support before they
-can be used.
+Check `format_version` and `protocol_version` before using an export. Unknown
+properties may be ignored in a supported version. Adding properties preserves
+`format_version`; changing existing meanings or representations requires a new
+version. Consumers must support any type kinds or primitives they use.
 
-The fingerprint identifies the wire schema, not the exported file's bytes.
-Documentation and category changes can change an export without changing its
-fingerprint. Generator formatting changes can also change the bytes compared by
-`-check` while preserving the JSON contract.
+Documentation, categories, and generator formatting can change the exported
+bytes without changing the fingerprint. `-check` reports the file as stale
+whenever its contents differ from the generated export, including these changes.
