@@ -164,7 +164,7 @@ func (s *Server) addActiveCall() error {
 }
 
 // RegisterHandlers validates and registers a batch atomically.
-// Registration closes when serving starts or [Seal] succeeds.
+// Registration closes when serving starts or [Server.Seal] succeeds.
 func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -347,7 +347,7 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 }
 
 // Seal checks for missing handlers and authorizers, then closes registration.
-// It is idempotent and called by [Serve], [ServeConn], and HTTP adapters.
+// It is idempotent and called by [Server.Serve], [Server.ServeConn], and HTTP adapters.
 // If it fails, registration remains open.
 func (s *Server) Seal() error {
 	if s == nil {
