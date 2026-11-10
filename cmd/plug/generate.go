@@ -78,6 +78,10 @@ func runGenerate(args []string) error {
 		return nil
 	}
 
+	if *out == "-" {
+		_, err := os.Stdout.Write(data)
+		return err
+	}
 	if err := writeAtomic(*out, data); err != nil {
 		return fmt.Errorf("write generated output: %w", err)
 	}
