@@ -1,12 +1,16 @@
 # Plug
 
-> WARNING! WARNING! WARNING!
+Yet another RPC protocol nobody needs (probably).
+
+<p align="center">
+  <img alt="Achtung!" src=".github/achtung.webp" width="200"/>
+</p>
+
+> [!WARNING]
 >
 > This is unstable code for personal use, subject to change without notice and
 > may gain or lose functionality at any time. Don't depend on it (or do, I don't
 > care).
-
-Plug provides schema-generated RPC for Go services.
 
 ## Documentation
 
