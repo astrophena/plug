@@ -1,8 +1,8 @@
 # Schema JSON export (version 1)
 
-The JSON export describes a service's resolved types, wire IDs, and handshake
-hashes. Use it to build clients or generators without parsing `.plug` files.
-Calls use the [Plug protocol](protocol.md).
+The JSON export describes a service's resolved types, wire IDs, handshake
+hashes, and canonical source. Use it to build clients or generators without
+parsing `.plug` files. Calls use the [Plug protocol](protocol.md).
 
 ## Generate an export
 
@@ -20,19 +20,20 @@ always arrays, including `[]` when empty. The only conditional properties are
 
 ## Service object
 
-| Property           | JSON type | Meaning                                      |
-| ------------------ | --------- | -------------------------------------------- |
-| `format_version`   | number    | Export format version, currently `1`.        |
-| `protocol_version` | number    | Native wire protocol version, currently `1`. |
-| `package`          | string    | Schema namespace.                            |
-| `major`            | number    | Schema major version (1–65535).              |
-| `family`           | string    | Complete compatibility-family SHA-256 hash.  |
-| `fingerprint`      | string    | Complete exact-schema SHA-256 hash.          |
-| `documentation`    | string    | Package documentation, or `""`.              |
-| `permissions`      | array     | Permission objects.                          |
-| `types`            | array     | Named type objects.                          |
-| `categories`       | array     | Documentation groups.                        |
-| `methods`          | array     | RPC method objects.                          |
+| Property           | JSON type | Meaning                                          |
+| ------------------ | --------- | ------------------------------------------------ |
+| `format_version`   | number    | Export format version, currently `1`.            |
+| `protocol_version` | number    | Native wire protocol version, currently `1`.     |
+| `package`          | string    | Schema namespace.                                |
+| `major`            | number    | Schema major version (1–65535).                  |
+| `family`           | string    | Complete compatibility-family SHA-256 hash.      |
+| `fingerprint`      | string    | Complete exact-schema SHA-256 hash.              |
+| `source`           | string    | Canonical schema text, escaped as a JSON string. |
+| `documentation`    | string    | Package documentation, or `""`.                  |
+| `permissions`      | array     | Permission objects.                              |
+| `types`            | array     | Named type objects.                              |
+| `categories`       | array     | Documentation groups.                            |
+| `methods`          | array     | RPC method objects.                              |
 
 Hashes are 64-character lowercase hexadecimal strings. A consumer decodes them
 to 32 bytes and uses their first 16 bytes in a call hello. IDs are unsigned
@@ -45,8 +46,9 @@ by schema name. HTTP bindings are sorted by verb, then path. Category order is
 preserved, while each category's members are sorted by name. Field arrays retain
 their declaration order, which is their wire encoding order.
 
-The export omits source paths, positions, Go names, and schema source text.
-Documentation strings contain normalized
+The export omits source paths, positions, and Go names. The `source` field
+contains the same canonical text sent by native servers during inspection and
+rejected handshakes. Documentation strings contain normalized
 [Go doc comment syntax](schema.md#documentation-and-linting) without comment
 markers or a trailing newline. Schema references, link definitions, and
 indentation are preserved; references are not replaced with plain names as in

@@ -26,6 +26,7 @@ func JSON(s plug.Schema) ([]byte, error) {
 		Major:           s.Major,
 		Family:          hex.EncodeToString(s.Family[:]),
 		Fingerprint:     hex.EncodeToString(s.Fingerprint[:]),
+		Source:          s.Source,
 		Documentation:   s.Documentation,
 		Permissions:     make([]jsonPermission, len(s.Permissions)),
 		Types:           make([]jsonType, len(s.Types)),
@@ -116,6 +117,7 @@ type jsonSchema struct {
 	Major           uint16           `json:"major"`
 	Family          string           `json:"family"`
 	Fingerprint     string           `json:"fingerprint"`
+	Source          string           `json:"source"`
 	Documentation   string           `json:"documentation"`
 	Permissions     []jsonPermission `json:"permissions"`
 	Types           []jsonType       `json:"types"`
