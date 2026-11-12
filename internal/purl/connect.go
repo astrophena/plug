@@ -58,6 +58,7 @@ func (s *session) reconnect(ctx context.Context) error {
 		return fmt.Errorf("reconnect: %w", err)
 	}
 	client, err := plug.NewClient(ctx, conn, s.schema, plug.ClientOptions{
+		Compression:  true,
 		StrictSchema: true,
 	})
 	if err != nil {

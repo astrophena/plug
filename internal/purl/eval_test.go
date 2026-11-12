@@ -21,6 +21,7 @@ func testServer(t *testing.T) (*plug.Server, *atomic.Int64, <-chan struct{}) {
 	calls := new(atomic.Int64)
 	waiting := make(chan struct{})
 	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
+		Compression: true,
 		Security: plug.Security{
 			Authenticate: func(context.Context, net.Conn) (plug.Principal, error) {
 				return plug.Principal{
