@@ -53,16 +53,12 @@ func connect(ctx context.Context, endpoint string, headers http.Header) (*sessio
 }
 
 func (s *session) reconnect(ctx context.Context) error {
-	conn, err := s.dial(ctx)
-	if err != nil {
-		return fmt.Errorf("reconnect: %w", err)
-	}
-	client, err := plug.NewClient(ctx, conn, s.schema, plug.ClientOptions{
+	client, err := plug.DialFunc(ctx, s.dial, s.schema, plug.ClientOptions{
 		Compression:  true,
 		StrictSchema: true,
 	})
 	if err != nil {
-		return fmt.Errorf("handshake: %w", err)
+		return fmt.Errorf("reconnect: %w", err)
 	}
 	s.client = client
 	return nil

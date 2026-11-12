@@ -101,9 +101,23 @@ func NewClient(ctx context.Context, conn net.Conn, schema *Schema, opts ClientOp
 }
 
 // Dial connects to address and returns a [Client].
+// See [DialFunc] for custom transports and compression fallback behavior.
 func Dial(ctx context.Context, network, address string, schema *Schema, opts ClientOptions) (*Client, error) {
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, network, address)
+	return DialFunc(ctx, func(ctx context.Context) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, address)
+	}, schema, opts)
+}
+
+// DialFunc opens a connection with dial and returns a [Client].
+// When opts.Compression is true and the peer rejects compression, DialFunc
+// redials and retries without compression.
+func DialFunc(ctx context.Context, dial func(context.Context) (net.Conn, error), schema *Schema, opts ClientOptions) (*Client, error) {
+	if dial == nil {
+		return nil, fmt.Errorf("plug: dial function is nil")
+	}
+
+	conn, err := dial(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +126,7 @@ func Dial(ctx context.Context, network, address string, schema *Schema, opts Cli
 		return c, err
 	}
 
-	conn, err = dialer.DialContext(ctx, network, address)
+	conn, err = dial(ctx)
 	if err != nil {
 		return nil, err
 	}

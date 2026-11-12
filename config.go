@@ -123,9 +123,9 @@ type ClientOptions struct {
 	// Limits overrides the default resource limits.
 	Limits Limits
 
-	// Compression requests zstd-compressed frames. Dial retries without
-	// compression when the peer does not support it. NewClient cannot retry an
-	// existing connection and returns an error instead.
+	// Compression requests zstd-compressed frames. [Dial] and [DialFunc] retry
+	// without compression when the peer does not support it. [NewClient] cannot
+	// retry an existing connection and returns an error instead.
 	Compression bool
 
 	// StrictSchema requires matching schema fingerprints.

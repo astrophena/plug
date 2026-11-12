@@ -18,10 +18,15 @@ import (
 
 func testServer(t *testing.T) (*plug.Server, *atomic.Int64, <-chan struct{}) {
 	t.Helper()
+	return newTestServer(t, true)
+}
+
+func newTestServer(t *testing.T, compression bool) (*plug.Server, *atomic.Int64, <-chan struct{}) {
+	t.Helper()
 	calls := new(atomic.Int64)
 	waiting := make(chan struct{})
 	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Compression: true,
+		Compression: compression,
 		Security: plug.Security{
 			Authenticate: func(context.Context, net.Conn) (plug.Principal, error) {
 				return plug.Principal{

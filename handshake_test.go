@@ -176,6 +176,46 @@ func TestDialRetriesWithoutCompression(t *testing.T) {
 	}
 }
 
+func TestDialFuncRetriesWithoutCompression(t *testing.T) {
+	if _, err := DialFunc(t.Context(), nil, &Schema{}, ClientOptions{}); err == nil {
+		t.Fatal("DialFunc(nil) succeeded; want error")
+	}
+
+	schema := &Schema{
+		Package: "test",
+		Major:   1,
+		Family:  plugimpl.FamilyFingerprint("test", 1),
+		Source:  "package test version 1\n",
+	}
+	server, err := NewServer(schema, ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	served := make(chan error, 2)
+	dials := 0
+	client, err := DialFunc(t.Context(), func(ctx context.Context) (net.Conn, error) {
+		dials++
+		serverConn, clientConn := net.Pipe()
+		go func() { served <- server.ServeConn(t.Context(), serverConn) }()
+		return clientConn, nil
+	}, schema, ClientOptions{Compression: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dials != 2 {
+		t.Fatalf("dials = %d; want 2", dials)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-served; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestHandshakeCancellation(t *testing.T) {
 	schema := &Schema{
 		Package: "test",

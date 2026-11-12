@@ -97,3 +97,20 @@ func TestDialerRejectsUserAgentOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectWithoutServerCompression(t *testing.T) {
+	server, calls, _ := newTestServer(t, false)
+	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
+	s, err := connect(t.Context(), endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.client.Close() })
+
+	if _, err := evaluate(t, s, "greeter.ping()"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("calls = %d; want 1", got)
+	}
+}
