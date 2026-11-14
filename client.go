@@ -12,6 +12,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"go.astrophena.name/plug/plugimpl"
 )
@@ -36,16 +37,8 @@ type clientRequest struct {
 	enc    *plugimpl.Encoder
 }
 
-var pendingCallPool = sync.Pool{
-	New: func() any {
-		return &pendingCall{
-			response: make(chan frame, 1),
-		}
-	},
-}
-
-// Client manages calls over a Plug connection and is safe for concurrent use.
-// Use [NewClient] or [Dial] to create a client.
+// Client makes RPC calls over a connection.
+// Its methods are safe for concurrent use.
 type Client struct {
 	conn   net.Conn
 	framer *framer
@@ -54,8 +47,9 @@ type Client struct {
 
 	nextID atomic.Uint64
 
-	shards [numPendingShards]pendingShard
-	writes chan clientRequest
+	shards      [numPendingShards]pendingShard
+	pendingPool sync.Pool
+	writes      chan clientRequest
 
 	cancelMu    sync.Mutex
 	cancels     []uint64
@@ -66,7 +60,7 @@ type Client struct {
 	done      chan struct{}
 }
 
-// NewClient performs the schema handshake and takes ownership of conn.
+// NewClient performs the handshake on conn and takes ownership of it.
 // It keeps an independent copy of schema.
 func NewClient(ctx context.Context, conn net.Conn, schema *Schema, opts ClientOptions) (*Client, error) {
 	if conn == nil {
@@ -89,6 +83,13 @@ func NewClient(ctx context.Context, conn net.Conn, schema *Schema, opts ClientOp
 		writes:      make(chan clientRequest),
 		cancelReady: make(chan struct{}, 1),
 		done:        make(chan struct{}),
+		pendingPool: sync.Pool{
+			New: func() any {
+				return &pendingCall{
+					response: make(chan frame, 1),
+				}
+			},
+		},
 	}
 	c.framer = newFramer(conn, bufio.NewReaderSize(conn, 32*1024), c.limits, compression)
 	for i := range c.shards {
@@ -97,11 +98,12 @@ func NewClient(ctx context.Context, conn net.Conn, schema *Schema, opts ClientOp
 
 	go c.readLoop()
 	go c.writeLoop()
+
 	return c, nil
 }
 
 // Dial connects to address and returns a [Client].
-// See [DialFunc] for custom transports and compression fallback behavior.
+// See [DialFunc] for compression fallback.
 func Dial(ctx context.Context, network, address string, schema *Schema, opts ClientOptions) (*Client, error) {
 	var dialer net.Dialer
 	return DialFunc(ctx, func(ctx context.Context) (net.Conn, error) {
@@ -110,8 +112,7 @@ func Dial(ctx context.Context, network, address string, schema *Schema, opts Cli
 }
 
 // DialFunc opens a connection with dial and returns a [Client].
-// When opts.Compression is true and the peer rejects compression, DialFunc
-// redials and retries without compression.
+// If the peer rejects compression, it redials without compression.
 func DialFunc(ctx context.Context, dial func(context.Context) (net.Conn, error), schema *Schema, opts ClientOptions) (*Client, error) {
 	if dial == nil {
 		return nil, fmt.Errorf("plug: dial function is nil")
@@ -139,32 +140,32 @@ func (c *Client) call(ctx context.Context, methodID uint32, enc *plugimpl.Encode
 	if id == 0 {
 		id = c.nextID.Add(1)
 	}
-	pending := pendingCallPool.Get().(*pendingCall)
+	pending := c.pendingPool.Get().(*pendingCall)
 	if err := c.addPending(id, pending); err != nil {
-		pendingCallPool.Put(pending)
+		c.pendingPool.Put(pending)
 		plugimpl.ReleaseEncoder(enc)
 		return frame{}, err
 	}
 	if err := c.sendRequest(ctx, id, methodID, enc); err != nil {
 		if c.removePending(id) {
-			pendingCallPool.Put(pending)
+			c.pendingPool.Put(pending)
 		}
 		return frame{}, err
 	}
 
 	select {
 	case value := <-pending.response:
-		pendingCallPool.Put(pending)
+		c.pendingPool.Put(pending)
 		return value, nil
 	case <-ctx.Done():
 		if c.removePending(id) {
-			pendingCallPool.Put(pending)
+			c.pendingPool.Put(pending)
 			c.sendCancel(id)
 		}
 		return frame{}, ctx.Err()
 	case <-c.done:
 		if c.removePending(id) {
-			pendingCallPool.Put(pending)
+			c.pendingPool.Put(pending)
 		}
 		return frame{}, c.closeErr
 	}
@@ -180,7 +181,7 @@ func (c *Client) Err() error {
 	}
 }
 
-// Close closes the owned connection and fails pending calls.
+// Close closes the connection and fails pending calls.
 func (c *Client) Close() error {
 	if c == nil {
 		return nil
@@ -189,6 +190,8 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) readLoop() {
+	defer c.framer.close()
+
 	for {
 		value, err := c.framer.readFrame()
 		if err != nil {
@@ -331,4 +334,96 @@ func (c *Client) shutdown(reason error) error {
 		c.cancelMu.Unlock()
 	})
 	return closeResult
+}
+
+// Call invokes method with req.
+// Canceling ctx stops waiting for a response
+// and requests cancellation on the server.
+func (c *Client) Call[Request, Response any](
+	ctx context.Context,
+	method plugimpl.Method[Request, Response],
+	req Request,
+) (Response, error) {
+	var zero Response
+
+	if c == nil {
+		return zero, fmt.Errorf("plug: client is nil")
+	}
+	if err := method.Validate(c.schema); err != nil {
+		return zero, err
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+
+	maxList := c.limits.MaxListElements
+	enc, err := plugimpl.EncodePooled(method.Request(), req, maxList)
+	if err != nil {
+		return zero, fmt.Errorf("plug: encode request for %s: %w", method.Info().Name, err)
+	}
+
+	result, err := c.call(ctx, method.ID(), enc)
+	if err != nil {
+		return zero, err
+	}
+
+	response, err, protocolError := decodeMethodResult(method, result, c.limits)
+	if protocolError {
+		c.shutdown(err)
+	}
+	return response, err
+}
+
+func decodeMethodResult[Request, Response any](
+	method plugimpl.Method[Request, Response],
+	result frame,
+	limits Limits,
+) (Response, error, bool) {
+	var zero Response
+	if result.kind == frameResponse {
+		decoded, err := plugimpl.Decode(method.Response(), result.payload, limits.MaxListElements, limits.MaxDecodeBytes)
+		if err != nil {
+			return zero, fmt.Errorf("plug: decode response for %s: %w", method.Info().Name, err), true
+		}
+		return decoded, nil, false
+	}
+	err, protocolError := decodeResultError(method.Info(), method.Errors(), result, limits, "response")
+	return zero, err, protocolError
+}
+
+func decodeResultError(
+	method MethodInfo,
+	errorsCodec plugimpl.ErrorCodec,
+	result frame,
+	limits Limits,
+	responseName string,
+) (error, bool) {
+	switch result.kind {
+	case frameApplicationError:
+		if errorsCodec.Decode == nil {
+			return fmt.Errorf("plug: method %s returned an undeclared application error", method.Name), true
+		}
+		appErr, err := plugimpl.DecodeError(errorsCodec, result.payload, result.code, limits.MaxListElements, limits.MaxDecodeBytes)
+		if err != nil {
+			return fmt.Errorf("plug: decode application error for %s: %w", method.Name, err), true
+		}
+		if appErr == nil {
+			return fmt.Errorf("plug: application error decoder returned nil"), true
+		}
+		return appErr, false
+	case frameProtocolError:
+		if !utf8.Valid(result.payload) {
+			return fmt.Errorf("plug: protocol error message is not UTF-8"), true
+		}
+		errCode := ErrorCode(result.code)
+		if errCode < ErrorBadRequest || errCode > ErrorUnimplemented {
+			return fmt.Errorf("plug: unknown core error code %d", errCode), true
+		}
+		return &RemoteError{
+			Code:    errCode,
+			Message: string(result.payload),
+		}, false
+	default:
+		return fmt.Errorf("plug: unexpected %s result kind %d", responseName, result.kind), true
+	}
 }

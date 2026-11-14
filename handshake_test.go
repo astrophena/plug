@@ -8,281 +8,202 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"go.astrophena.name/plug/plugimpl"
+	"go.astrophena.name/base/testutil"
 )
 
-func TestHandshakeGoldenEncoding(t *testing.T) {
-	var family, fingerprint [32]byte
+func TestHandshakeEncoding(t *testing.T) {
+	var (
+		family      [32]byte
+		fingerprint [32]byte
+	)
 	for i := range family {
 		family[i] = byte(i)
 		fingerprint[i] = byte(32 + i)
 	}
-	cases := map[string]struct {
-		mode        handshakeMode
-		strict      bool
-		compression bool
-		want        []byte
+	for name, tc := range map[string]struct {
+		mode             handshakeMode
+		strict, compress bool
+		flags            byte
 	}{
 		"call": {
 			mode: handshakeCall,
-			want: append(append([]byte{'P', 'L', 'U', 'G', 1, 0}, family[:handshakeHashSize]...), fingerprint[:handshakeHashSize]...),
 		},
-		"strict call": {
+		"strict": {
 			mode:   handshakeCall,
 			strict: true,
-			want:   append(append([]byte{'P', 'L', 'U', 'G', 1, handshakeFlagStrict}, family[:handshakeHashSize]...), fingerprint[:handshakeHashSize]...),
+			flags:  2,
 		},
-		"compressed call": {
-			mode:        handshakeCall,
-			compression: true,
-			want:        append(append([]byte{'P', 'L', 'U', 'G', 1, handshakeFlagZstd}, family[:handshakeHashSize]...), fingerprint[:handshakeHashSize]...),
+		"compressed": {
+			mode:     handshakeCall,
+			compress: true,
+			flags:    4,
 		},
 		"inspect": {
-			mode: handshakeInspect,
-			want: []byte{'P', 'L', 'U', 'G', 1, handshakeFlagInspect},
+			mode:  handshakeInspect,
+			flags: 1,
 		},
-	}
-	for name, tc := range cases {
+	} {
 		t.Run(name, func(t *testing.T) {
 			conn := new(memoryConn)
-			if err := writeClientHello(conn, tc.mode, tc.strict, tc.compression, family, fingerprint); err != nil {
+			if err := writeClientHello(conn, tc.mode, tc.strict, tc.compress, family, fingerprint); err != nil {
 				t.Fatal(err)
 			}
-			if got := conn.Bytes(); !bytes.Equal(got, tc.want) {
-				t.Fatalf("client hello = %x, want %x", got, tc.want)
+			want := []byte{'P', 'L', 'U', 'G', 1, tc.flags}
+			if tc.mode == handshakeCall {
+				want = append(want, family[:16]...)
+				want = append(want, fingerprint[:16]...)
 			}
-			hello, err := readClientHello(conn)
+			testutil.AssertEqual(t, conn.Bytes(), want)
+			got, err := readClientHello(conn)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if hello.mode != tc.mode || hello.strict != tc.strict || hello.compression != tc.compression || hello.version != wireVersion {
-				t.Fatalf("decoded hello = %#v", hello)
-			}
-			if tc.mode == handshakeCall && (hello.family != handshakeHash(family) || hello.fingerprint != handshakeHash(fingerprint)) {
-				t.Fatalf("decoded hashes = %x %x", hello.family, hello.fingerprint)
+			testutil.AssertEqual(t, got.mode, tc.mode)
+			testutil.AssertEqual(t, got.version, wireVersion)
+			testutil.AssertEqual(t, got.strict, tc.strict)
+			testutil.AssertEqual(t, got.compression, tc.compress)
+			if tc.mode == handshakeCall {
+				testutil.AssertEqual(t, got.family, handshakeHash(family))
+				testutil.AssertEqual(t, got.fingerprint, handshakeHash(fingerprint))
 			}
 		})
 	}
 }
 
 func TestServerHandshakeEncoding(t *testing.T) {
-	schema := &Schema{
-		Family:      [32]byte{1},
-		Fingerprint: [32]byte{2},
-		Source:      "package test version 1\n",
-	}
-
+	sch := echoSchema("string")
 	accepted := new(memoryConn)
-	if err := writeServerHello(accepted, handshakeOK, schema, false); err != nil {
+
+	if err := writeServerHello(accepted, handshakeOK, sch, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := accepted.Bytes(); !bytes.Equal(got, []byte{byte(handshakeOK)}) {
-		t.Fatalf("accepted server hello = %x", got)
-	}
+	testutil.AssertEqual(t, accepted.Bytes(), []byte{0})
 
 	described := new(memoryConn)
-	if err := writeServerHello(described, handshakeSchemaMismatch, schema, true); err != nil {
+	if err := writeServerHello(described, handshakeSchemaMismatch, sch, true); err != nil {
 		t.Fatal(err)
 	}
 	status, remote, err := readServerHello(described, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != handshakeSchemaMismatch || remote.Version != wireVersion || remote.Family != schema.Family || remote.Fingerprint != schema.Fingerprint || remote.Source != schema.Source {
-		t.Fatalf("decoded server hello = %d, %#v", status, remote)
-	}
-}
-
-func TestCompressionHandshakeRequiresServerSupport(t *testing.T) {
-	schema := &Schema{
-		Package: "test",
-		Major:   1,
-		Family:  plugimpl.FamilyFingerprint("test", 1),
-		Source:  "package test version 1\n",
-	}
-	server, err := NewServer(schema, ServerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverConn, clientConn := net.Pipe()
-	served := make(chan error, 1)
-	go func() { served <- server.ServeConn(t.Context(), serverConn) }()
-	if _, err := NewClient(t.Context(), clientConn, schema, ClientOptions{
-		Compression: true,
-	}); !errors.Is(err, errCompressionUnsupported) {
-		t.Fatalf("compression error = %v", err)
-	}
-	if err := <-served; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDialRetriesWithoutCompression(t *testing.T) {
-	schema := &Schema{
-		Package: "test",
-		Major:   1,
-		Family:  plugimpl.FamilyFingerprint("test", 1),
-		Source:  "package test version 1\n",
-	}
-	server, err := NewServer(schema, ServerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	served := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			served <- err
-			return
-		}
-		var header [clientHeaderSize]byte
-		_, readErr := io.ReadFull(conn, header[:])
-		closeErr := conn.Close()
-		if readErr != nil || closeErr != nil {
-			served <- errors.Join(readErr, closeErr)
-			return
-		}
-
-		conn, err = listener.Accept()
-		if err != nil {
-			served <- err
-			return
-		}
-		served <- server.ServeConn(t.Context(), conn)
-	}()
-
-	client, err := Dial(t.Context(), "tcp", listener.Addr().String(), schema, ClientOptions{
-		Compression: true,
+	testutil.AssertEqual(t, status, handshakeSchemaMismatch)
+	testutil.AssertEqual(t, remote, RemoteSchema{
+		Version:     wireVersion,
+		Family:      sch.Family,
+		Fingerprint: sch.Fingerprint,
+		Source:      sch.Source,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-served; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDialFuncRetriesWithoutCompression(t *testing.T) {
-	if _, err := DialFunc(t.Context(), nil, &Schema{}, ClientOptions{}); err == nil {
-		t.Fatal("DialFunc(nil) succeeded; want error")
-	}
-
-	schema := &Schema{
-		Package: "test",
-		Major:   1,
-		Family:  plugimpl.FamilyFingerprint("test", 1),
-		Source:  "package test version 1\n",
-	}
-	server, err := NewServer(schema, ServerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	served := make(chan error, 2)
-	dials := 0
-	client, err := DialFunc(t.Context(), func(ctx context.Context) (net.Conn, error) {
-		dials++
-		serverConn, clientConn := net.Pipe()
-		go func() { served <- server.ServeConn(t.Context(), serverConn) }()
-		return clientConn, nil
-	}, schema, ClientOptions{Compression: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dials != 2 {
-		t.Fatalf("dials = %d; want 2", dials)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if err := <-served; err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 func TestHandshakeCancellation(t *testing.T) {
-	schema := &Schema{
-		Package: "test",
-		Major:   1,
-		Family:  plugimpl.FamilyFingerprint("test", 1),
-		Source:  "package test;\n",
-	}
-	cases := map[string]struct {
-		run func(context.Context, net.Conn) error
-	}{
-		"call": {
-			run: func(ctx context.Context, conn net.Conn) error {
-				_, err := NewClient(ctx, conn, schema, ClientOptions{})
-				return err
-			},
+	sch := echoSchema("string")
+	for name, run := range map[string]func(context.Context, net.Conn) error{
+		"client": func(ctx context.Context, conn net.Conn) error {
+			_, err := NewClient(ctx, conn, sch, ClientOptions{})
+			return err
 		},
-		"inspect": {
-			run: func(ctx context.Context, conn net.Conn) error {
-				_, err := Inspect(ctx, conn)
-				return err
-			},
+		"inspect": func(ctx context.Context, conn net.Conn) error {
+			_, err := Inspect(ctx, conn)
+			return err
 		},
-	}
-	for name, tc := range cases {
+	} {
 		t.Run(name, func(t *testing.T) {
-			serverConn, clientConn := net.Pipe()
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			result := make(chan error, 1)
-			go func() {
-				result <- tc.run(ctx, clientConn)
-			}()
-			select {
-			case err := <-result:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("error = %v", err)
+			synctest.Test(t, func(t *testing.T) {
+				var (
+					conn, peer  = net.Pipe()
+					ctx, cancel = context.WithCancel(t.Context())
+				)
+				defer peer.Close()
+				cancel()
+				if err := run(ctx, conn); !errors.Is(err, context.Canceled) {
+					t.Fatalf("handshake = %v; want context.Canceled", err)
 				}
-			case <-time.After(time.Second):
-				t.Fatal("handshake did not stop after cancellation")
-			}
-			if err := serverConn.Close(); err != nil {
-				t.Errorf("close peer: %v", err)
-			}
+			})
 		})
 	}
 }
 
-func TestServeConnCancellationDuringHandshake(t *testing.T) {
-	schema := &Schema{
-		Package: "test",
-		Major:   1,
-		Family:  plugimpl.FamilyFingerprint("test", 1),
-		Source:  "package test;\n",
-	}
-	server, err := NewServer(schema, ServerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverConn, clientConn := net.Pipe()
-	defer func() {
-		if err := clientConn.Close(); err != nil {
-			t.Errorf("close peer: %v", err)
+func TestHandshakeServerCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sch := echoSchema("string")
+		sch.Methods = nil
+		s, err := NewServer(sch, ServerOptions{})
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := server.ServeConn(ctx, serverConn); err != nil {
-		t.Fatalf("ServeConn error = %v", err)
+		conn, peer := net.Pipe()
+		defer peer.Close()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- s.ServeConn(ctx, conn) }()
+		synctest.Wait()
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+type memoryConn struct {
+	bytes.Buffer
+}
+
+func (*memoryConn) Close() error                     { return nil }
+func (*memoryConn) LocalAddr() net.Addr              { return nil }
+func (*memoryConn) RemoteAddr() net.Addr             { return nil }
+func (*memoryConn) SetDeadline(time.Time) error      { return nil }
+func (*memoryConn) SetReadDeadline(time.Time) error  { return nil }
+func (*memoryConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestInspect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := echoServer(t, nil, ServerOptions{})
+		got, err := Inspect(t.Context(), serveConn(t, s))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := s.Schema()
+		testutil.AssertEqual(t, got.Family, want.Family)
+		testutil.AssertEqual(t, got.Fingerprint, want.Fingerprint)
+		testutil.AssertEqual(t, got.Source, want.Source)
+	})
+}
+
+func TestSchemaHandshake(t *testing.T) {
+	for name, strict := range map[string]bool{"strict mismatch": true, "compatible fingerprint": false} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, m := echoServer(t, nil, ServerOptions{})
+				sch := s.Schema()
+				sch.Fingerprint[0] ^= 0xff
+
+				c, err := NewClient(t.Context(), serveConn(t, s), sch, ClientOptions{
+					StrictSchema: strict,
+				})
+				if strict {
+					e, ok := errors.AsType[*SchemaMismatchError](err)
+					if !ok {
+						t.Fatalf("NewClient() = %v; want SchemaMismatchError", err)
+					}
+					testutil.AssertEqual(t, e.Remote.Source, sch.Source)
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer c.Close()
+					if _, err := c.Call(t.Context(), m, ""); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+		})
 	}
 }

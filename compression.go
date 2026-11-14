@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -23,42 +22,27 @@ type frameCompression struct {
 	decoder *zstd.Decoder
 }
 
-var zstdFrames = sync.OnceValues(func() (*frameCompression, error) {
-	encoder, err := zstd.NewWriter(nil,
-		zstd.WithEncoderLevel(zstd.SpeedFastest),
-		zstd.WithWindowSize(zstdWindowSize),
-	)
-	if err != nil {
-		return nil, err
-	}
-	decoder, err := zstd.NewReader(nil,
-		zstd.WithDecodeAllCapLimit(true),
-		zstd.WithDecoderMaxMemory(math.MaxUint32),
-		zstd.WithDecoderMaxWindow(zstdWindowSize),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &frameCompression{
-		encoder: encoder,
-		decoder: decoder,
-	}, nil
-})
-
-func compressFramePayload(dst, payload []byte) ([]byte, error) {
+func (c *frameCompression) compress(dst, payload []byte) ([]byte, error) {
 	if len(payload) < compressionThreshold {
 		return dst[:0], nil
 	}
-	compression, err := zstdFrames()
-	if err != nil {
-		return nil, fmt.Errorf("plug: initialize zstd: %w", err)
+	if c.encoder == nil {
+		encoder, err := zstd.NewWriter(nil,
+			zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithWindowSize(zstdWindowSize),
+			zstd.WithEncoderConcurrency(1),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("plug: initialize zstd: %w", err)
+		}
+		c.encoder = encoder
 	}
 	// A nonempty destination avoids zstd's input-sized allocation.
 	dst = binary.AppendUvarint(dst[:0], uint64(len(payload)))
-	return compression.encoder.EncodeAll(payload, dst), nil
+	return c.encoder.EncodeAll(payload, dst), nil
 }
 
-func decompressFramePayload(payload []byte, maximum uint64) ([]byte, error) {
+func (c *frameCompression) decompress(payload []byte, maximum uint64) ([]byte, error) {
 	size, n := binary.Uvarint(payload)
 	if n <= 0 {
 		return nil, fmt.Errorf("plug: invalid compressed payload size")
@@ -66,11 +50,19 @@ func decompressFramePayload(payload []byte, maximum uint64) ([]byte, error) {
 	if size == 0 || size > maximum {
 		return nil, fmt.Errorf("plug: decompressed payload size %d exceeds maximum %d", size, maximum)
 	}
-	compression, err := zstdFrames()
-	if err != nil {
-		return nil, fmt.Errorf("plug: initialize zstd: %w", err)
+	if c.decoder == nil {
+		decoder, err := zstd.NewReader(nil,
+			zstd.WithDecodeAllCapLimit(true),
+			zstd.WithDecoderMaxMemory(math.MaxUint32),
+			zstd.WithDecoderMaxWindow(zstdWindowSize),
+			zstd.WithDecoderConcurrency(1),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("plug: initialize zstd: %w", err)
+		}
+		c.decoder = decoder
 	}
-	result, err := compression.decoder.DecodeAll(payload[n:], make([]byte, 0, int(size)))
+	result, err := c.decoder.DecodeAll(payload[n:], make([]byte, 0, int(size)))
 	if err != nil {
 		return nil, fmt.Errorf("plug: decompress frame: %w", err)
 	}

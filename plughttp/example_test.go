@@ -7,6 +7,7 @@ package plughttp_test
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 
 	"go.astrophena.name/base/web"
@@ -16,12 +17,12 @@ import (
 )
 
 func ExampleNew() {
-	server, err := exampleServer()
+	srv, err := exampleServer()
 	if err != nil {
 		log.Print(err)
 		return
 	}
-	api, err := plughttp.New(server, greeter.HTTPRoutes(server), plughttp.Options{
+	api, err := plughttp.New(srv, greeter.HTTPRoutes(srv), plughttp.Options{
 		Authenticate: func(*http.Request) (plug.Principal, error) {
 			return plug.Principal{
 				Subject: "http-client",
@@ -33,28 +34,31 @@ func ExampleNew() {
 		return
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", api)
-	if err := http.ListenAndServe("localhost:8080", mux); err != nil {
+	h := &http.Server{
+		Addr:        "localhost:8080",
+		Handler:     api,
+		BaseContext: func(net.Listener) context.Context { return srv.Context() },
+	}
+	if err := h.ListenAndServe(); err != nil {
 		log.Print(err)
 	}
 }
 
 func ExampleNewBrowser() {
-	documentation, err := plughttp.NewBrowser(&greeter.Schema)
+	docs, err := plughttp.NewBrowser(&greeter.Schema)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/docs/", http.StripPrefix("/docs", documentation))
-	server := web.Server{
+	mux.Handle("/docs/", http.StripPrefix("/docs", docs))
+	srv := web.Server{
 		Addr:     "localhost:8080",
 		Mux:      mux,
 		StaticFS: plughttp.StaticFS(),
 	}
-	if err := server.ListenAndServe(context.Background()); err != nil {
+	if err := srv.ListenAndServe(context.Background()); err != nil {
 		log.Print(err)
 	}
 }
@@ -72,9 +76,9 @@ func exampleServer() (*plug.Server, error) {
 	}
 
 	if err := greeter.RegisterHandlers(srv, greeter.Handlers{
-		GetUser: func(_ context.Context, request greeter.GetUserRequest) (greeter.User, error) {
+		GetUser: func(_ context.Context, r greeter.GetUserRequest) (greeter.User, error) {
 			return greeter.User{
-				ID:   request.ID,
+				ID:   r.ID,
 				Name: "Ada",
 				Role: &greeter.Guest{},
 			}, nil

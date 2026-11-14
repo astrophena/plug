@@ -1,6 +1,7 @@
 -- copyright/exclusions.json --
 [
   "example/greeter/greeter_plug.go",
+  "internal/rawtest/rawtest_plug.go",
   "internal/browser/browser_templ.go",
   "internal/generate/internal/**/client.go",
   "internal/generate/testdata/*.go.golden"

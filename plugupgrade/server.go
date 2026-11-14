@@ -2,12 +2,11 @@
 // Use of this source code is governed by the ISC
 // license that can be found in the LICENSE.md file.
 
-// Package plugupgrade carries Plug connections over HTTP/1.1 Upgrade or
-// WebSocket. A reverse proxy may terminate TLS and authenticate the request.
+// Package plugupgrade carries Plug over HTTP Upgrade and WebSocket.
+// A reverse proxy may terminate TLS and authenticate requests.
 //
-// WebSocket peers send a ping every 30 seconds and close the connection if no
-// pong arrives within 10 seconds. Raw stream users must keep reading to handle
-// control frames.
+// WebSocket peers ping every 30 seconds and allow 10 seconds for a pong.
+// Raw stream users must keep reading to handle control frames.
 package plugupgrade
 
 import (
@@ -33,16 +32,16 @@ type Options struct {
 	// If nil, the request's context supplies the principal.
 	Authenticate func(*http.Request) (plug.Principal, error)
 
-	// WriteError optionally writes a custom error response when authentication
-	// fails. When nil, http.Error is used.
+	// WriteError handles authentication failures.
+	// Nil uses [http.Error].
 	WriteError func(http.ResponseWriter, *http.Request, error)
 }
 
-// Server serves Plug over native and WebSocket upgrades on the same endpoint.
+// Server serves HTTP and WebSocket upgrades on the same endpoint.
 // WebSocket upgrades reject cross-origin browser requests.
 type Server struct {
-	server  *plug.Server
-	options Options
+	server *plug.Server
+	opts   Options
 
 	mu      sync.Mutex
 	conns   map[net.Conn]struct{}
@@ -60,8 +59,8 @@ func (s *Server) IsActive() bool {
 	return len(s.conns) != 0
 }
 
-// NewServer returns an HTTP upgrade adapter for server.
-func NewServer(server *plug.Server, options Options) (*Server, error) {
+// NewServer seals server and returns an HTTP upgrade adapter.
+func NewServer(server *plug.Server, opts Options) (*Server, error) {
 	if server == nil {
 		return nil, errors.New("plugupgrade: Plug server is nil")
 	}
@@ -69,14 +68,14 @@ func NewServer(server *plug.Server, options Options) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		server:  server,
-		options: options,
-		conns:   make(map[net.Conn]struct{}),
+		server: server,
+		opts:   opts,
+		conns:  make(map[net.Conn]struct{}),
 	}, nil
 }
 
-// ServeHTTP validates and upgrades an HTTP/1.1 request, then serves Plug until
-// the peer disconnects or the request context is canceled.
+// ServeHTTP upgrades an HTTP/1.1 request and serves Plug
+// until disconnection or request cancellation.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -103,11 +102,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	if s.options.Authenticate != nil {
-		principal, err := s.options.Authenticate(r)
+	if s.opts.Authenticate != nil {
+		principal, err := s.opts.Authenticate(r)
 		if err != nil {
-			if s.options.WriteError != nil {
-				s.options.WriteError(w, r, err)
+			if s.opts.WriteError != nil {
+				s.opts.WriteError(w, r, err)
 			} else {
 				http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			}
@@ -180,8 +179,9 @@ func hijack(w http.ResponseWriter) (net.Conn, *bufio.Writer) {
 	return c, rw.Writer
 }
 
-// Shutdown refuses new upgrades, closes active connections, and waits for their
-// handlers to return or ctx to expire. A Server cannot be reused afterward.
+// Shutdown refuses new upgrades and closes active connections.
+// It waits for handlers to return or ctx to expire.
+// The server cannot be reused afterward.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true

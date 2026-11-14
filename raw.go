@@ -16,15 +16,16 @@ import (
 	"go.astrophena.name/plug/plugimpl"
 )
 
-// ErrCloseWriteUnsupported reports that a raw connection's transport does not
-// support a half-close of its write side.
+// ErrCloseWriteUnsupported means the transport cannot close its write side separately.
 var ErrCloseWriteUnsupported = errors.New("plug: raw connection does not support CloseWrite")
 
-// RawConn is an accepted raw connection. Reads preserve bytes buffered while
-// the acceptance frame was decoded. CloseWrite delegates to transports such as
-// TCP and Unix stream sockets that support half-closing.
+// RawConn is an accepted raw connection.
+// Reads preserve buffered data.
 type RawConn interface {
 	net.Conn
+
+	// CloseWrite closes the write side,
+	// returning [ErrCloseWriteUnsupported] if unsupported.
 	CloseWrite() error
 }
 
@@ -61,9 +62,8 @@ func (c *rawConn) CloseWrite() error {
 	return conn.CloseWrite()
 }
 
-// RawStream controls the one-way transition from framed RPC to raw bytes.
-// A handler may reject the decoded request by returning before Accept.
-// After Accept succeeds, no further frames are sent on the connection.
+// RawStream switches a connection from RPC frames to raw bytes.
+// Returning an error before [RawStream.Accept] rejects the request.
 type RawStream struct {
 	conn   RawConn
 	accept func() error
@@ -72,7 +72,7 @@ type RawStream struct {
 	accepted bool
 }
 
-// Accept sends the successful response frame and returns the raw connection.
+// Accept switches to raw I/O and returns the connection.
 // It may be called once.
 func (s *RawStream) Accept() (RawConn, error) {
 	if s == nil {
@@ -96,8 +96,8 @@ func (s *RawStream) isAccepted() bool {
 	return s.accepted
 }
 
-// OpenRaw opens method on conn and takes ownership of the connection.
-// A successful call returns the accepted raw stream; a failed call closes conn.
+// OpenRaw calls method on conn and takes ownership of it.
+// It closes conn on error or when ctx is canceled.
 func OpenRaw[Request any](ctx context.Context, conn net.Conn, method plugimpl.RawMethod[Request], req Request, opts ClientOptions) (raw RawConn, err error) {
 	if conn == nil {
 		return nil, fmt.Errorf("plug: connection is nil")
@@ -127,6 +127,7 @@ func OpenRaw[Request any](ctx context.Context, conn net.Conn, method plugimpl.Ra
 
 	r := bufio.NewReaderSize(conn, 32*1024)
 	f := newFramer(conn, r, limits, compression)
+	defer f.close()
 	var resp frame
 	err = runConnIO(ctx, conn, func() error {
 		if err := f.writeRequest(1, method.ID(), payload); err != nil {
@@ -148,6 +149,6 @@ func OpenRaw[Request any](ctx context.Context, conn net.Conn, method plugimpl.Ra
 		return newRawConn(ctx, conn, r), nil
 	}
 
-	responseErr, _ := decodeResultError(method.Info(), method.Errors(), resp, limits, "", "raw response")
+	responseErr, _ := decodeResultError(method.Info(), method.Errors(), resp, limits, "raw response")
 	return nil, responseErr
 }

@@ -45,13 +45,15 @@ type payloadStats struct {
 }
 
 // framer reads and writes frames for a connection.
-// Reads must be serialized. Writes are safe for concurrent use.
+// Reads must be serialized.
+// Writes are safe for concurrent use.
 type framer struct {
-	r        io.Reader
-	br       io.ByteReader
-	w        io.Writer
-	limits   Limits
-	compress bool
+	r           io.Reader
+	br          io.ByteReader
+	w           io.Writer
+	limits      Limits
+	compress    bool
+	compression frameCompression
 
 	rcode [4]byte
 	rbuf  []byte
@@ -65,7 +67,9 @@ type framer struct {
 func newFramer(w io.Writer, r io.Reader, limits Limits, compress bool) *framer {
 	br, ok := r.(io.ByteReader)
 	if !ok {
-		br = &streamByteReader{r: r}
+		br = &streamByteReader{
+			r: r,
+		}
 	}
 	return &framer{
 		r:        r,
@@ -75,6 +79,22 @@ func newFramer(w io.Writer, r io.Reader, limits Limits, compress bool) *framer {
 		compress: compress,
 		wbuf:     make([]byte, 0, 256),
 	}
+}
+
+// close releases codecs and rejects further writes.
+// The caller must stop reading and unblock writes first.
+func (f *framer) close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.werr == nil {
+		f.werr = io.ErrClosedPipe
+	}
+	if f.compression.decoder != nil {
+		f.compression.decoder.Close()
+		f.compression.decoder = nil
+	}
+	// EncodeAll is synchronous and does not start a streaming encoder.
+	f.compression.encoder = nil
 }
 
 type streamByteReader struct {
@@ -194,7 +214,7 @@ func (f *framer) readFrame() (frame, error) {
 	}
 	if compressed {
 		headerSize := n - remaining
-		v.payload, err = decompressFramePayload(v.payload, uint64(f.limits.MaxFrameSize)-headerSize)
+		v.payload, err = f.compression.decompress(v.payload, uint64(f.limits.MaxFrameSize)-headerSize)
 		if err != nil {
 			return frame{}, err
 		}
@@ -212,7 +232,9 @@ func (f *framer) writeFrameWithStats(v frame) (payloadStats, error) {
 	defer f.mu.Unlock()
 
 	if f.werr != nil {
-		return payloadStats{size: len(v.payload)}, f.werr
+		return payloadStats{
+			size: len(v.payload),
+		}, f.werr
 	}
 
 	stats, err := f.writeFrameLocked(v)
@@ -295,7 +317,7 @@ func (f *framer) writeFrameLocked(v frame) (payloadStats, error) {
 	payload := v.payload
 	if f.compress {
 		var err error
-		f.cbuf, err = compressFramePayload(f.cbuf, payload)
+		f.cbuf, err = f.compression.compress(f.cbuf, payload)
 		if err != nil {
 			return stats, err
 		}

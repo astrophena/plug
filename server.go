@@ -12,14 +12,16 @@ import (
 	"io"
 	"maps"
 	"net"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"go.astrophena.name/plug/plugimpl"
 )
 
-// Server serves the methods in a schema. Use [NewServer] to create a server.
+// Server serves the methods in a schema.
 type Server struct {
 	schema       *Schema
 	limits       Limits
@@ -45,6 +47,8 @@ type handlerEntry struct {
 	info      MethodInfo
 	invoke    func(context.Context, []byte) callResult
 	invokeRaw func(context.Context, []byte, *RawStream) callResult
+	typed     any
+	errors    plugimpl.ErrorCodec
 }
 
 type callResult struct {
@@ -79,7 +83,7 @@ func (r *callResult) observe(s *Server, stats payloadStats) {
 	r.observeCtx = nil
 }
 
-// NewServer returns a server bound to a copy of schema.
+// NewServer creates a server with an independent copy of schema.
 func NewServer(schema *Schema, opts ServerOptions) (*Server, error) {
 	schema, limits, err := normalizeSchemaLimits(schema, opts.Limits)
 	if err != nil {
@@ -102,15 +106,18 @@ func NewServer(schema *Schema, opts ServerOptions) (*Server, error) {
 	}, nil
 }
 
-// Schema returns an independent copy of the server's validated schema.
+// Schema returns an independent copy of the server's schema.
 func (s *Server) Schema() *Schema { return plugimpl.CopySchema(s.schema) }
 
 // Limits returns the server's resource limits.
 func (s *Server) Limits() Limits { return s.limits }
 
-// Shutdown rejects new calls, cancels active calls, and waits for them to finish
-// or ctx to expire. It applies to native connections and [Invoke] calls.
-// Subsequent calls wait for the same shutdown to finish.
+// Context returns the server's context, canceled by [Server.Shutdown].
+func (s *Server) Context() context.Context { return s.serverCtx }
+
+// Shutdown rejects new calls and cancels [Server.Context] and binary calls.
+// It waits for active handlers to return or ctx to expire.
+// Repeated calls wait for the same shutdown.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -135,7 +142,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 }
 
-// trackConnectionCall registers work that must complete before [Shutdown] returns.
+// trackConnectionCall registers work for [Server.Shutdown] to wait for.
 func (s *Server) trackConnectionCall(parentCtx context.Context) (context.Context, context.CancelFunc, error) {
 	// serveConn links parentCtx to server shutdown once for the whole connection.
 	if err := s.addActiveCall(); err != nil {
@@ -164,7 +171,7 @@ func (s *Server) addActiveCall() error {
 }
 
 // RegisterHandlers validates and registers a batch atomically.
-// Registration closes when serving starts or [Server.Seal] succeeds.
+// Registration closes after a successful [Server.Seal].
 func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -190,10 +197,13 @@ func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 			if reg.HandleRaw == nil {
 				return fmt.Errorf("plug: raw handler for method %s (0x%08x) is nil", info.Name, reg.ID)
 			}
-			if reg.Handle != nil || reg.Encode != nil {
+			if reg.Handle != nil || reg.Encode != nil || reg.Typed != nil {
 				return fmt.Errorf("plug: raw method %s (0x%08x) has framed callbacks", info.Name, reg.ID)
 			}
 		} else {
+			if reg.Typed == nil {
+				return fmt.Errorf("plug: typed handler for method %s (0x%08x) is nil", info.Name, reg.ID)
+			}
 			if reg.Handle == nil {
 				return fmt.Errorf("plug: handler for method %s (0x%08x) is nil", info.Name, reg.ID)
 			}
@@ -211,11 +221,15 @@ func (s *Server) RegisterHandlers(registrations []plugimpl.Registration) error {
 			return fmt.Errorf("plug: duplicate handler registration in batch for method %s (already in batch as %s)", info.Name, prev.info.Name)
 		}
 
-		entry := handlerEntry{info: info}
+		entry := handlerEntry{
+			info: info,
+		}
 		if reg.Raw {
 			entry.invokeRaw = newRawInvoke(s, info, reg)
 		} else {
 			entry.invoke = newInvoke(s, info, reg)
+			entry.typed = reg.Typed
+			entry.errors = reg.Errors
 		}
 		batch[reg.ID] = entry
 	}
@@ -236,7 +250,7 @@ func newInvoke(
 		}
 
 		var response any
-		duration, callErr, panicErr := runHandler(func() error {
+		duration, callErr, panicErr := call.run(func() error {
 			var err error
 			response, err = reg.Handle(ctx, request)
 			return err
@@ -287,8 +301,8 @@ func ignorePanic(run func()) {
 	run()
 }
 
-// Serve accepts connections from listener until ctx is canceled or accepting
-// fails. Server takes ownership of listener and every accepted connection.
+// Serve serves accepted connections until ctx is canceled or listener fails.
+// It takes ownership of listener and accepted connections.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) (err error) {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -331,8 +345,8 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) (err error) {
 	}
 }
 
-// ServeConn performs the handshake and serves the connection until it
-// closes or ctx is canceled.
+// ServeConn serves conn until it closes or ctx is canceled.
+// It takes ownership of conn.
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -346,9 +360,9 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	return s.serveConn(ctx, conn)
 }
 
-// Seal checks for missing handlers and authorizers, then closes registration.
-// It is idempotent and called by [Server.Serve], [Server.ServeConn], and HTTP adapters.
-// If it fails, registration remains open.
+// Seal checks for missing handlers and authorizers, closing registration on success.
+// Serving and [Server.Invoke] call it automatically.
+// Calls after success do nothing.
 func (s *Server) Seal() error {
 	if s == nil {
 		return fmt.Errorf("plug: server is nil")
@@ -475,6 +489,7 @@ func (s *Server) serveFrames(ctx context.Context, conn net.Conn, principal Princ
 
 	r := bufio.NewReaderSize(conn, 32*1024)
 	f := newFramer(conn, r, s.limits, compression)
+	defer f.close()
 	calls := newActiveCalls()
 
 	var (
@@ -701,7 +716,8 @@ func (a *activeCalls) add(id uint64, call activeCall) bool {
 	return true
 }
 
-// cancel suppresses the response, but the call keeps its capacity until done.
+// cancel suppresses the response.
+// Capacity remains reserved until the handler finishes.
 func (a *activeCalls) cancel(id uint64) {
 	a.mu.Lock()
 	call, ok := a.pending[id]
@@ -738,5 +754,246 @@ func (a *activeCalls) cancelAll() {
 
 	for _, call := range calls {
 		call.cancel()
+	}
+}
+
+type callState struct {
+	server       *Server
+	ctx          context.Context
+	method       MethodInfo
+	principal    Principal
+	hasPrincipal bool
+	started      time.Time
+}
+
+func (s *Server) beginCall(
+	ctx context.Context,
+	method MethodInfo,
+	decode func([]byte, uint32, uint64) (any, error),
+	payload []byte,
+) (callState, any, callResult, bool) {
+	c := s.newCall(ctx, method)
+	request, err := decode(payload, s.limits.MaxListElements, s.limits.MaxDecodeBytes)
+	if err != nil {
+		return c, request, c.reject(
+			StageDecodeRequest,
+			err,
+			ErrorBadRequest,
+			fmt.Sprintf("decode %s request: %v", method.Name, err),
+			true,
+		), false
+	}
+	result, ok := c.authorize(request)
+	return c, request, result, ok
+}
+
+func (s *Server) newCall(ctx context.Context, method MethodInfo) callState {
+	principal, found := PrincipalFromContext(ctx)
+	c := callState{
+		server:       s,
+		ctx:          ctx,
+		method:       method,
+		principal:    principal,
+		hasPrincipal: found,
+	}
+	if s.observeCall != nil {
+		c.started = time.Now()
+	}
+	return c
+}
+
+func (c *callState) authorize(request any) (callResult, bool) {
+	if c.method.Public {
+		return callResult{}, true
+	}
+
+	if !c.hasPrincipal {
+		err := fmt.Errorf("method requires an authenticated principal")
+		return c.reject(
+			StageAuthorize,
+			err,
+			ErrorUnauthenticated,
+			"method requires an authenticated principal",
+			false,
+		), false
+	}
+	if err := c.server.security.Authorize(c.ctx, c.principal, c.method.Permission, c.method, request); err != nil {
+		return c.reject(
+			StageAuthorize,
+			err,
+			ErrorPermissionDenied,
+			"permission denied",
+			false,
+		), false
+	}
+	return callResult{}, true
+}
+
+func (c *callState) reject(
+	stage ErrorStage,
+	err error,
+	code ErrorCode,
+	message string,
+	fatal bool,
+) callResult {
+	c.report(stage, err)
+	return c.complete(coreResult(code, message, fatal), 0, CallRejected, err)
+}
+
+func (c *callState) applicationError(codec plugimpl.ErrorCodec, err error, duration time.Duration) (callResult, bool) {
+	if codec.Encode == nil {
+		return callResult{}, false
+	}
+	id, enc, ok := plugimpl.EncodeError(codec, err, c.server.limits.MaxListElements)
+	if !ok {
+		return callResult{}, false
+	}
+	if encodeErr := enc.Err(); encodeErr != nil {
+		plugimpl.ReleaseEncoder(enc)
+		return c.internal(
+			StageEncodeResponse,
+			encodeErr,
+			duration,
+			fmt.Sprintf("encode %s application error: %v", c.method.Name, encodeErr),
+		), true
+	}
+	return c.complete(callResult{
+		kind:    frameApplicationError,
+		code:    id,
+		payload: enc.Data(),
+		enc:     enc,
+	}, duration, CallApplicationError, err), true
+}
+
+func (c *callState) internal(stage ErrorStage, err error, duration time.Duration, message string) callResult {
+	c.report(stage, err)
+	return c.complete(coreResult(ErrorInternal, message, false), duration, CallInternalError, err)
+}
+
+func (c *callState) succeed(result callResult, duration time.Duration) callResult {
+	return c.complete(result, duration, CallSucceeded, nil)
+}
+
+func (c *callState) report(stage ErrorStage, err error) {
+	c.server.safeReportError(c.ctx, ErrorEvent{
+		Stage:     stage,
+		Method:    c.method,
+		Principal: c.principal,
+		Err:       err,
+	})
+}
+
+func (c *callState) complete(result callResult, duration time.Duration, outcome CallOutcome, err error) callResult {
+	if c.server.observeCall == nil {
+		return result
+	}
+	result.observeCtx = c.ctx
+	result.event = CallEvent{
+		Method:          c.method,
+		Principal:       c.principal,
+		HasPrincipal:    c.hasPrincipal,
+		Duration:        time.Since(c.started),
+		HandlerDuration: duration,
+		Outcome:         outcome,
+		Err:             err,
+	}
+	return result
+}
+
+func (c *callState) run(handler func() error) (duration time.Duration, err, panicErr error) {
+	var started time.Time
+	if c.server.observeCall != nil {
+		started = time.Now()
+	}
+	defer func() {
+		if !started.IsZero() {
+			duration = time.Since(started)
+		}
+		if recovered := recover(); recovered != nil {
+			panicErr = fmt.Errorf("panic: %v\n%s", recovered, debug.Stack())
+		}
+	}()
+	err = handler()
+	return duration, err, panicErr
+}
+
+func (s *Server) serveRawCall(
+	ctx context.Context,
+	conn net.Conn,
+	r *bufio.Reader,
+	f *framer,
+	req frame,
+	entry handlerEntry,
+) error {
+	callCtx, cancel, err := s.trackConnectionCall(ctx)
+	if err != nil {
+		return f.writeProtocolError(req.requestID, ErrorInternal, "server is shutting down")
+	}
+	defer s.finishConnectionCall(cancel)
+
+	raw := newRawConn(callCtx, conn, r)
+	stream := &RawStream{
+		conn: raw,
+		accept: func() error {
+			err := f.writeResponse(req.requestID, nil)
+			if err != nil {
+				s.safeReportError(callCtx, ErrorEvent{
+					Stage:  StageWriteFrame,
+					Method: entry.info,
+					Err:    err,
+				})
+			}
+			return err
+		},
+	}
+	result := invokeSafely(func() callResult {
+		return entry.invokeRaw(callCtx, req.payload, stream)
+	})
+	defer result.release()
+
+	if stream.isAccepted() {
+		result.observe(s, payloadStats{})
+		return nil
+	}
+	stats, err := f.writeResult(req.requestID, result.kind, result.code, result.payload)
+	result.observe(s, stats)
+	if err != nil {
+		s.safeReportError(callCtx, ErrorEvent{
+			Stage:  StageWriteFrame,
+			Method: entry.info,
+			Err:    err,
+		})
+	}
+	return err
+}
+
+func newRawInvoke(
+	s *Server,
+	info MethodInfo,
+	reg plugimpl.Registration,
+) func(context.Context, []byte, *RawStream) callResult {
+	return func(ctx context.Context, payload []byte, stream *RawStream) callResult {
+		call, request, result, ok := s.beginCall(ctx, info, reg.Decode, payload)
+		if !ok {
+			return result
+		}
+		duration, callErr, panicErr := call.run(func() error {
+			return reg.HandleRaw(ctx, request, stream)
+		})
+		if panicErr != nil {
+			return call.internal(StageHandlerPanic, panicErr, duration, "internal server error")
+		}
+		if callErr != nil && !stream.isAccepted() {
+			if result, ok := call.applicationError(reg.Errors, callErr, duration); ok {
+				return result
+			}
+		}
+		if callErr == nil && !stream.isAccepted() {
+			callErr = fmt.Errorf("raw handler returned before accepting the connection")
+		}
+		if callErr != nil {
+			return call.internal(StageHandlerPanic, callErr, duration, "internal server error")
+		}
+		return call.succeed(callResult{}, duration)
 	}
 }

@@ -1,0 +1,17 @@
+// rawtest exercises raw streams in the core package tests.
+package rawtest version 1
+
+// denied rejects a raw stream before acceptance.
+denied
+  // reason explains the rejection.
+  reason: string
+= OpenError
+
+// rawtest.connect opens a dedicated byte stream.
+rawtest.connect
+  // message identifies the stream.
+  message: string
+-> raw throws OpenError public
+
+// rawtest.ping checks a framed connection before a raw request.
+rawtest.ping -> void public

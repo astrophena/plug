@@ -15,42 +15,38 @@ import (
 
 const defaultMaxFrameSize uint32 = 16 << 20
 
-// TypeKind classifies a generated schema type.
+// TypeKind classifies a schema type.
 type TypeKind uint8
 
 const (
 	// TypeNewtype is a distinct scalar type.
 	TypeNewtype TypeKind = iota + 1
-	// TypeRecord is a concrete positional record.
+	// TypeRecord is a positional record.
 	TypeRecord
-	// TypeSum is a sealed constructor union.
+	// TypeSum is a constructor union.
 	TypeSum
 )
 
 // Schema describes a Plug service.
 type Schema struct {
-	// Package is the schema namespace and generated Go package name.
+	// Package names the schema and generated Go package.
 	Package string
-	// Major is the service compatibility generation.
+	// Major is the schema's major version.
 	Major uint16
 	// Family identifies Package and Major independently of additive changes.
 	Family        [32]byte
 	Documentation string
-	// Fingerprint identifies the complete normalized schema generation.
+	// Fingerprint identifies the normalized wire schema.
 	Fingerprint [32]byte
-	// Source is the documented canonical schema returned by inspection.
-	Source string
-	// Permissions lists declared authorization capabilities.
+	// Source is the canonical schema returned by inspection.
+	Source      string
 	Permissions []PermissionInfo
-	// Types lists every generated named type.
-	Types []TypeInfo
-	// Categories group types and methods for documentation.
-	Categories []CategoryInfo
-	// Methods lists the service's RPC methods.
-	Methods []MethodInfo
+	Types       []TypeInfo
+	Categories  []CategoryInfo
+	Methods     []MethodInfo
 }
 
-// FamilyFingerprint identifies compatible schemas with packageName and major.
+// FamilyFingerprint hashes the package name and major version.
 func FamilyFingerprint(packageName string, major uint16) [32]byte {
 	return sha256.Sum256([]byte(packageName + "\x00" + strconv.FormatUint(uint64(major), 10)))
 }
@@ -89,7 +85,7 @@ const (
 	TypeExprList
 )
 
-// String returns the kind name used in diagnostics.
+// String returns the kind name.
 func (k TypeExprKind) String() string {
 	switch k {
 	case TypeExprPrimitive:
@@ -103,7 +99,7 @@ func (k TypeExprKind) String() string {
 	}
 }
 
-// TypeExpr is a type expression in runtime schema metadata.
+// TypeExpr describes a schema type expression.
 type TypeExpr struct {
 	Kind     TypeExprKind
 	Name     string
@@ -141,7 +137,7 @@ func OptionalType(expr TypeExpr) TypeExpr {
 	return expr
 }
 
-// String returns the canonical diagnostic spelling of the expression.
+// String returns the canonical type expression.
 func (t TypeExpr) String() string {
 	var b strings.Builder
 	if t.Optional {
@@ -173,8 +169,7 @@ type MethodInfo struct {
 	// ID is the method's canonical CRC32.
 	ID uint32
 	// Fields lists positional request fields.
-	Fields []FieldInfo
-	// Response is the structured response type expression.
+	Fields   []FieldInfo
 	Response TypeExpr
 	// Error names the declared application-error type, if any.
 	Error string
@@ -185,15 +180,13 @@ type MethodInfo struct {
 	HTTP       []HTTPBindingInfo
 }
 
-// CategoryInfo groups types and methods for generated documentation. Categories
-// do not participate in method IDs, schema fingerprints, or RPC dispatch.
+// CategoryInfo groups schema types and methods for documentation.
+// Categories do not affect wire IDs, fingerprints, or dispatch.
 type CategoryInfo struct {
 	Name          string
 	Documentation string
-	// Types contains the names of logical types in this category.
-	Types []string
-	// Methods contains the names of RPC methods in this category.
-	Methods []string
+	Types         []string
+	Methods       []string
 }
 
 // CopySchema returns an independent copy of schema.
@@ -242,7 +235,7 @@ func copyTypeExpr(expr TypeExpr) TypeExpr {
 	return expr
 }
 
-// ValidateSchema checks schema identity, access rules, and runtime limits.
+// ValidateSchema checks identity, access metadata, and schema size.
 func ValidateSchema(schema *Schema) error {
 	if schema == nil {
 		return fmt.Errorf("plug: schema is nil")
@@ -347,14 +340,14 @@ type HTTPBindingInfo struct {
 	Path string
 }
 
-// RemoteSchema describes a peer during inspection or a handshake error.
+// RemoteSchema describes a peer's schema.
 type RemoteSchema struct {
 	// Version is the peer's supported wire version.
 	Version uint16
-	// Family identifies the peer's compatible package generation.
+	// Family identifies the peer's package and major version.
 	Family [32]byte
 	// Fingerprint identifies the peer's normalized wire schema.
 	Fingerprint [32]byte
-	// Source is the peer's documented canonical schema.
+	// Source is the peer's canonical schema.
 	Source string
 }

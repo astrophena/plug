@@ -547,7 +547,7 @@ func (s *session) method(info plug.MethodInfo) *function {
 			m := plugimpl.NewMethod(s.schema, info.ID, s.fieldsCodec(info.Fields), s.codec(info.Response), s.errorCodec(info.Error))
 			method = &m
 		}
-		return plug.Call(ctx, s.client, *method, value{data: r})
+		return s.client.Call(ctx, *method, value{data: r})
 	}
 	return fn
 }

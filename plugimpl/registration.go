@@ -19,6 +19,9 @@ type Registration struct {
 	HandleRaw func(context.Context, any, any) error
 	Encode    func(any, uint32) (*Encoder, error)
 	Errors    ErrorCodec
+
+	// Typed holds func(context.Context, Request) (Response, error) for local calls.
+	Typed any
 }
 
 // AppendHandler appends a typed handler to batch.
@@ -47,6 +50,7 @@ func AppendHandler[Request, Response any](
 			return EncodePooled(method.Response(), response.(Response), maxList)
 		},
 		Errors: method.Errors(),
+		Typed:  handler,
 	})
 	return nil
 }

@@ -61,13 +61,13 @@ func (g *generator) writeImports() {
 	if g.hasRawMethods() {
 		g.line("\t\"net\"")
 	}
-	if g.hasHTTP && g.hasSums() {
+	if g.hasHTTP && (g.hasSums() || g.hasHTTPFields()) {
 		g.line("\t\"encoding/json/v2\"")
 	}
-	if g.hasHTTP && g.hasSumFields() {
+	if g.hasHTTP && (g.hasSumFields() || g.hasHTTPFields()) {
 		g.line("\t\"encoding/json/jsontext\"")
 	}
-	if (g.hasHTTP && g.hasSums()) || g.errorFieldsNeedFmt() {
+	if (g.hasHTTP && g.hasSums()) || g.hasHTTPFields() || g.errorFieldsNeedFmt() {
 		g.line("\t\"fmt\"")
 	}
 	if len(g.errorConstructors) > 0 {

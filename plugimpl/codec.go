@@ -2,6 +2,7 @@
 // Use of this source code is governed by the ISC
 // license that can be found in the LICENSE.md file.
 
+// Package plugimpl supports generated Plug bindings.
 package plugimpl
 
 import (
@@ -19,25 +20,24 @@ import (
 
 const maxRetainedBufferSize = 64 * 1024
 
-// DefaultMaxDecodeBytes bounds allocations made while decoding one payload.
+// DefaultMaxDecodeBytes is the default decoding allocation limit.
 const DefaultMaxDecodeBytes uint64 = 64 << 20
 
 // Codec encodes and decodes values of type T.
 type Codec[T any] struct {
-	// Encode appends a value to an encoder.
 	Encode func(*Encoder, T)
-	// Decode reads a value from a decoder.
 	Decode func(*Decoder) T
 }
 
-// ErrorCodec encodes and decodes a method's declared errors. Its zero value
-// declares no errors.
+// ErrorCodec encodes and decodes declared errors.
+// Its zero value declares no errors.
 type ErrorCodec struct {
+	// Match finds a declared error through wrappers
+	// and returns its constructor ID and unwrapped value.
+	// It must reject typed-nil errors.
+	Match func(error) (constructorID uint32, value error, ok bool)
 	// Encode recognizes and encodes a declared error.
 	Encode func(*Encoder, error) (constructorID uint32, ok bool)
-	// Identify recognizes a declared error and returns its constructor ID
-	// without encoding the payload.
-	Identify func(error) (constructorID uint32, ok bool)
 	// Decode reconstructs a declared error from its constructor ID.
 	Decode func(*Decoder, uint32) error
 }
@@ -52,8 +52,8 @@ type Encoder struct {
 // Err returns the first encoding error.
 func (e *Encoder) Err() error { return e.err }
 
-// Data returns the encoded payload. The result aliases encoder storage and
-// stays valid until the encoder is reused or released.
+// Data returns the encoded bytes without copying.
+// They remain valid until the encoder is reused or released.
 func (e *Encoder) Data() []byte { return e.data }
 
 // Fail records err if no earlier encoding error occurred.
@@ -124,23 +124,21 @@ func (e *Encoder) Bytes(value []byte) {
 	e.data = append(e.data, value...)
 }
 
-// Raw appends bytes without a length prefix. It is used to preserve an unknown
-// constructor body across schema generations.
+// Raw appends bytes without a length prefix, preserving unknown constructors.
 func (e *Encoder) Raw(value []byte) {
 	if e.err == nil {
 		e.data = append(e.data, value...)
 	}
 }
 
-// BeginRecord starts a length-delimited record body and returns a marker for
-// EndValue.
+// BeginRecord starts a length-delimited record and returns its [Encoder.EndValue] marker.
 func (e *Encoder) BeginRecord() int {
 	e.data = append(e.data, 0)
 	return len(e.data)
 }
 
-// BeginSum starts a length-delimited sum body with constructorID and returns a
-// marker for EndValue.
+// BeginSum starts a length-delimited constructor body
+// and returns its [Encoder.EndValue] marker.
 func (e *Encoder) BeginSum(constructorID uint32) int {
 	e.data = binary.LittleEndian.AppendUint32(e.data, constructorID)
 	return e.BeginRecord()
@@ -170,7 +168,8 @@ func (e *Encoder) EndValue(bodyStart int) {
 	copy(e.data[bodyStart-1:bodyStart-1+prefixSize], prefix[:prefixSize])
 }
 
-// Decoder decodes a frame payload. The first error stops further decoding.
+// Decoder reads a frame payload.
+// The first error stops decoding.
 type Decoder struct {
 	data            []byte
 	offset          int
@@ -181,8 +180,8 @@ type Decoder struct {
 	bytesLeft       uint64
 }
 
-// Reserve charges n bytes to the payload's allocation budget. It returns false
-// and stops decoding when the budget is exhausted or an earlier error occurred.
+// Reserve charges n bytes to the allocation budget.
+// It returns false if the budget is insufficient or decoding has failed.
 func (d *Decoder) Reserve(n uint64) bool {
 	if d.err != nil {
 		return false
@@ -195,7 +194,7 @@ func (d *Decoder) Reserve(n uint64) bool {
 	return true
 }
 
-// Reserve charges space for n values of type T before their allocation.
+// Reserve charges n values of type T to d's allocation budget.
 func Reserve[T any](d *Decoder, n int) bool {
 	size := uint64(reflect.TypeFor[T]().Size())
 	if n < 0 || size > 0 && uint64(n) > d.bytesLeft/size {
@@ -295,8 +294,8 @@ func (d *Decoder) String() string {
 	return string(value)
 }
 
-// Bytes decodes a length-prefixed byte sequence. The result aliases the frame
-// payload and remains valid after decoding.
+// Bytes decodes a length-prefixed slice that aliases the payload.
+// The slice remains valid after decoding.
 func (d *Decoder) Bytes() []byte {
 	length := d.U32()
 	if d.err != nil {
@@ -305,8 +304,8 @@ func (d *Decoder) Bytes() []byte {
 	return d.take(int(length))
 }
 
-// BeginRecord bounds the decoder to a length-delimited record body and
-// returns a marker for FinishValue.
+// BeginRecord bounds decoding to a length-delimited record
+// and returns its [Decoder.FinishValue] marker.
 func (d *Decoder) BeginRecord() int {
 	outerLimit := d.limit
 	size := d.U32()
@@ -321,8 +320,8 @@ func (d *Decoder) BeginRecord() int {
 	return outerLimit
 }
 
-// BeginSum reads a constructor ID, bounds the decoder to its body, and returns
-// the constructor ID and a marker for FinishValue.
+// BeginSum bounds decoding to a constructor body
+// and returns its ID and [Decoder.FinishValue] marker.
 func (d *Decoder) BeginSum() (uint32, int) {
 	value := d.take(4)
 	if value == nil {
@@ -331,8 +330,7 @@ func (d *Decoder) BeginSum() (uint32, int) {
 	return binary.LittleEndian.Uint32(value), d.BeginRecord()
 }
 
-// FinishValue restores the outer bound and ignores extension bytes that were
-// not understood by the local schema.
+// FinishValue skips unread extension bytes and restores the outer bound.
 func (d *Decoder) FinishValue(outerLimit int) {
 	if outerLimit < d.limit || outerLimit > len(d.data) {
 		d.fail(fmt.Errorf("plug: invalid value marker %d", outerLimit))
@@ -344,7 +342,7 @@ func (d *Decoder) FinishValue(outerLimit int) {
 	d.limit = outerLimit
 }
 
-// Remaining returns the unread bytes in the current bounded value.
+// Remaining returns the number of unread bytes in the current value.
 func (d *Decoder) Remaining() int {
 	if d.err != nil {
 		return 0
@@ -352,8 +350,7 @@ func (d *Decoder) Remaining() int {
 	return d.limit - d.offset
 }
 
-// RemainingBytes returns and consumes unread bytes. The result aliases the
-// frame payload.
+// RemainingBytes consumes and returns unread bytes, aliasing the payload.
 func (d *Decoder) RemainingBytes() []byte {
 	if d.err != nil {
 		return nil
@@ -596,8 +593,8 @@ func PooledEncoder(maxListElements uint32) *Encoder {
 	return e
 }
 
-// ReleaseEncoder returns e to the shared pool when its buffer is small enough.
-// The caller must stop using e and its payload afterward.
+// ReleaseEncoder releases e and its payload.
+// Do not use either afterward.
 func ReleaseEncoder(e *Encoder) {
 	if cap(e.data) <= maxRetainedBufferSize {
 		encoderPool.Put(e)
@@ -616,6 +613,7 @@ func Encode[T any](codec Codec[T], value T, maxListElements uint32) ([]byte, err
 }
 
 // EncodePooled encodes value into a pooled encoder.
+// Return it with [ReleaseEncoder].
 func EncodePooled[T any](codec Codec[T], value T, maxListElements uint32) (*Encoder, error) {
 	if codec.Encode == nil {
 		return nil, errors.New("plug: codec has no encoder")
@@ -630,6 +628,7 @@ func EncodePooled[T any](codec Codec[T], value T, maxListElements uint32) (*Enco
 }
 
 // EncodeError encodes value when it is declared by codec.
+// On a match, release the returned encoder with [ReleaseEncoder].
 func EncodeError(codec ErrorCodec, value error, maxListElements uint32) (uint32, *Encoder, bool) {
 	e := PooledEncoder(maxListElements)
 	id, ok := codec.Encode(e, value)
@@ -660,7 +659,8 @@ func releaseDecoder(d *Decoder) {
 	decoderPool.Put(d)
 }
 
-// Decode decodes a complete payload. A zero maxBytes uses DefaultMaxDecodeBytes.
+// Decode decodes a complete payload.
+// A zero maxBytes uses [DefaultMaxDecodeBytes].
 func Decode[T any](codec Codec[T], payload []byte, maxListElements uint32, maxBytes uint64) (T, error) {
 	var zero T
 	if codec.Decode == nil {

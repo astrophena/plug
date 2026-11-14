@@ -27,11 +27,13 @@ func (e *RemoteError) Error() string {
 	return fmt.Sprintf("plug: remote error %d: %s", e.Code, e.Message)
 }
 
-// SchemaMismatchError reports an exact-schema handshake failure.
+// SchemaMismatchError reports a schema family or fingerprint mismatch.
 type SchemaMismatchError struct {
 	Local  [32]byte
 	Remote RemoteSchema
-	Exact  bool
+
+	// Exact is true for a fingerprint mismatch within a matching family.
+	Exact bool
 }
 
 func (e *SchemaMismatchError) Error() string {

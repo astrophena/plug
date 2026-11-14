@@ -15,7 +15,7 @@ type Method[Request, Response any] struct {
 	errors   ErrorCodec
 }
 
-// RawMethod describes a method that takes over a dedicated connection.
+// RawMethod describes a raw method on a dedicated connection.
 type RawMethod[Request any] struct {
 	schema  *Schema
 	id      uint32
@@ -23,7 +23,7 @@ type RawMethod[Request any] struct {
 	errors  ErrorCodec
 }
 
-// NewMethod returns a method descriptor for generated bindings.
+// NewMethod returns a typed method descriptor.
 func NewMethod[Request, Response any](
 	schema *Schema,
 	id uint32,
@@ -40,7 +40,7 @@ func NewMethod[Request, Response any](
 	}
 }
 
-// NewRawMethod returns a raw method descriptor for generated bindings.
+// NewRawMethod returns a raw method descriptor.
 func NewRawMethod[Request any](
 	schema *Schema,
 	id uint32,
@@ -55,19 +55,19 @@ func NewRawMethod[Request any](
 	}
 }
 
-// Info returns the schema metadata for m.
+// Info returns the method's schema metadata.
 func (m Method[Request, Response]) Info() MethodInfo { return methodInfo(m.schema, m.id) }
 
-// Schema returns the generated schema that owns m.
+// Schema returns the method's schema.
 func (m Method[Request, Response]) Schema() *Schema { return m.schema }
 
-// Info returns the schema metadata for m.
+// Info returns the method's schema metadata.
 func (m RawMethod[Request]) Info() MethodInfo { return methodInfo(m.schema, m.id) }
 
-// Schema returns the generated schema that owns m.
+// Schema returns the method's schema.
 func (m RawMethod[Request]) Schema() *Schema { return m.schema }
 
-// Validate checks that m belongs to schema and has the expected response kind.
+// Validate checks that m belongs to schema and is framed.
 func (m Method[Request, Response]) Validate(schema *Schema) error {
 	return ValidateMethod(m.schema, schema, m.id, false)
 }
@@ -107,7 +107,7 @@ func methodInfo(schema *Schema, id uint32) MethodInfo {
 	}
 }
 
-// ValidateMethod checks that a generated method belongs to schema.
+// ValidateMethod checks method ownership and response kind.
 func ValidateMethod(owner, connection *Schema, id uint32, raw bool) error {
 	if owner == nil || connection == nil {
 		return fmt.Errorf("plug: method or connection schema is nil")
@@ -128,14 +128,14 @@ func ValidateMethod(owner, connection *Schema, id uint32, raw bool) error {
 	return fmt.Errorf("plug: method %s is raw", info.Name)
 }
 
-// ErrorInfo returns schema metadata for a generated declared error.
+// ErrorInfo returns the constructor metadata for a declared error.
 func (m Method[Request, Response]) ErrorInfo(err error) (ConstructorInfo, bool) {
-	if m.Errors().Identify == nil || m.Schema() == nil {
+	if m.errors.Match == nil || m.schema == nil {
 		return ConstructorInfo{}, false
 	}
-	id, ok := m.Errors().Identify(err)
+	id, _, ok := m.errors.Match(err)
 	if !ok {
 		return ConstructorInfo{}, false
 	}
-	return LookupConstructor(m.Schema(), id)
+	return LookupConstructor(m.schema, id)
 }

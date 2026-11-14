@@ -11,26 +11,25 @@ import (
 	"go.astrophena.name/base/ctxkey"
 )
 
-// Principal is an authenticated caller identity. Attributes are
-// application-defined.
+// Principal identifies an authenticated caller.
 type Principal struct {
-	// Subject is the stable caller identifier.
+	// Subject is the caller's stable identifier.
 	Subject string
-	// Attributes contains optional identity claims used by an authorizer.
+	// Attributes holds application-defined identity claims.
 	Attributes map[string]string
 }
 
 // Authenticator derives a principal from a connection.
 type Authenticator func(context.Context, net.Conn) (Principal, error)
 
-// Authorizer decides whether principal may call method with request.
+// Authorizer checks a caller's permission for a method and request.
 type Authorizer func(context.Context, Principal, string, MethodInfo, any) error
 
 // Security configures authentication and authorization.
 type Security struct {
-	// Authenticate optionally derives a principal per Plug connection.
+	// Authenticate identifies each binary connection's caller, if set.
 	Authenticate Authenticator
-	// Authorize enforces every non-public method before its handler runs.
+	// Authorize checks permissions for non-public methods.
 	Authorize Authorizer
 }
 
@@ -41,8 +40,7 @@ func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	return principalKey.WithValue(ctx, principal)
 }
 
-// PrincipalFromContext returns the authenticated principal attached by a Plug
-// or HTTP transport.
+// PrincipalFromContext returns the principal stored in ctx.
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	return principalKey.ValueOk(ctx)
 }

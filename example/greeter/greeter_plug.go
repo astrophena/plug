@@ -274,6 +274,20 @@ func (v *User) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func decodeGetUserHTTP(fields map[string]jsontext.Value, v *GetUserRequest) error {
+	if err := json.Unmarshal(fields["id"], &v.ID); err != nil {
+		return fmt.Errorf("decode field id: %w", err)
+	}
+	return nil
+}
+
+func decodeListUsersHTTP(fields map[string]jsontext.Value, v *ListUsersRequest) error {
+	if err := json.Unmarshal(fields["limit"], &v.Limit); err != nil {
+		return fmt.Errorf("decode field limit: %w", err)
+	}
+	return nil
+}
+
 // Schema describes the generated Plug service.
 var Schema = plug.Schema{
 	Package:       "greeter",
@@ -482,6 +496,7 @@ var codecUserID = plugimpl.Codec[UserID]{
 }
 
 var errorsLookupError = plugimpl.ErrorCodec{
+	Match: matchLookupError,
 	Encode: func(enc *plugimpl.Encoder, err error) (uint32, bool) {
 		var v LookupError
 		if !errors.As(err, &v) {
@@ -513,22 +528,6 @@ var errorsLookupError = plugimpl.ErrorCodec{
 			return 0, false
 		}
 	},
-	Identify: func(err error) (uint32, bool) {
-		var v LookupError
-		if !errors.As(err, &v) {
-			return 0, false
-		}
-		switch v := v.(type) {
-		case *Forbidden:
-			return constructorIDForbidden, true
-		case *NotFound:
-			return constructorIDNotFound, true
-		case *UnknownLookupError:
-			return v.ConstructorID, true
-		default:
-			return 0, false
-		}
-	},
 	Decode: func(dec *plugimpl.Decoder, id uint32) error {
 		switch id {
 		case constructorIDForbidden:
@@ -555,6 +554,28 @@ var errorsLookupError = plugimpl.ErrorCodec{
 			return &UnknownLookupError{ConstructorID: id, Payload: payload}
 		}
 	},
+}
+
+func matchLookupError(err error) (uint32, error, bool) {
+	var v LookupError
+	if !errors.As(err, &v) {
+		return 0, nil, false
+	}
+	switch v := v.(type) {
+	case *Forbidden:
+		if v != nil {
+			return constructorIDForbidden, v, true
+		}
+	case *NotFound:
+		if v != nil {
+			return constructorIDNotFound, v, true
+		}
+	case *UnknownLookupError:
+		if v != nil {
+			return v.ConstructorID, v, true
+		}
+	}
+	return 0, nil, false
 }
 
 var codecRole = plugimpl.Codec[Role]{
@@ -739,17 +760,17 @@ func (c *Client) Close() error { return c.raw.Close() }
 //   - A User when the caller can read it.
 //   - A LookupError when the lookup fails.
 func (c *Client) GetUser(ctx context.Context, req GetUserRequest) (User, error) {
-	return plug.Call(ctx, c.raw, methodGetUser, req)
+	return c.raw.Call(ctx, methodGetUser, req)
 }
 
 // ListUsers lists at most the requested number of users.
 func (c *Client) ListUsers(ctx context.Context, req ListUsersRequest) ([]User, error) {
-	return plug.Call(ctx, c.raw, methodListUsers, req)
+	return c.raw.Call(ctx, methodListUsers, req)
 }
 
 // Ping checks that the server is alive.
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := plug.Call(ctx, c.raw, methodPing, plugimpl.Void{})
+	_, err := c.raw.Call(ctx, methodPing, plugimpl.Void{})
 	return err
 }
 
@@ -759,18 +780,18 @@ func HTTPRoutes(server *plug.Server) []plughttp.Route {
 		plughttp.NewRoute(server, methodGetUser, plughttp.Binding{
 			Verb: "GET",
 			Path: "/v1/users/{id}",
-		}),
+		}, decodeGetUserHTTP),
 		plughttp.NewRoute(server, methodGetUser, plughttp.Binding{
 			Verb: "POST",
 			Path: "/v1/get-user",
-		}),
+		}, decodeGetUserHTTP),
 		plughttp.NewRoute(server, methodListUsers, plughttp.Binding{
 			Verb: "GET",
 			Path: "/v1/users",
-		}),
+		}, decodeListUsersHTTP),
 		plughttp.NewRoute(server, methodPing, plughttp.Binding{
 			Verb: "GET",
 			Path: "/healthz",
-		}),
+		}, nil),
 	}
 }

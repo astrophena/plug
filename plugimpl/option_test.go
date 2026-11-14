@@ -7,6 +7,8 @@ package plugimpl
 import (
 	"encoding/json/v2"
 	"testing"
+
+	"go.astrophena.name/base/testutil"
 )
 
 func TestOptionJSON(t *testing.T) {
@@ -46,9 +48,11 @@ func TestOptionJSON(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			data, err := json.Marshal(tc.value)
-			if err != nil || string(data) != tc.want {
-				t.Fatalf("Marshal() = %s, %v; want %s", data, err, tc.want)
+			if err != nil {
+				t.Fatal(err)
 			}
+
+			testutil.AssertEqual(t, string(data), tc.want)
 		})
 	}
 
@@ -64,7 +68,9 @@ func TestOptionJSON(t *testing.T) {
 		Bytes: Some[[]byte](nil),
 		List:  Some[[]string](nil),
 	})
-	if err != nil || string(data) != `{"zero":0,"false":false,"bytes":"","list":[]}` {
-		t.Fatalf("Marshal() = %s, %v", data, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	testutil.AssertEqual(t, string(data), `{"zero":0,"false":false,"bytes":"","list":[]}`)
 }

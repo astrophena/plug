@@ -127,21 +127,21 @@ func (g *generator) writeClient() {
 		g.doc(shape.name, m.Name, fmt.Sprintf("calls %s.", m.Name), m.Documentation)
 		if shape.noRequest && shape.void {
 			g.line("func (c *Client) %s(ctx context.Context) error {", shape.name)
-			g.line("\t_, err := plug.Call(ctx, c.raw, %s, plugimpl.Void{})", methodName(m.Name))
+			g.line("\t_, err := c.raw.Call(ctx, %s, plugimpl.Void{})", methodName(m.Name))
 			g.line("\treturn err")
 			g.line("}")
 		} else if shape.noRequest {
 			g.line("func (c *Client) %s(ctx context.Context) (%s, error) {", shape.name, shape.response)
-			g.line("\treturn plug.Call(ctx, c.raw, %s, plugimpl.Void{})", methodName(m.Name))
+			g.line("\treturn c.raw.Call(ctx, %s, plugimpl.Void{})", methodName(m.Name))
 			g.line("}")
 		} else if shape.void {
 			g.line("func (c *Client) %s(ctx context.Context, req %s) error {", shape.name, shape.request)
-			g.line("\t_, err := plug.Call(ctx, c.raw, %s, req)", methodName(m.Name))
+			g.line("\t_, err := c.raw.Call(ctx, %s, req)", methodName(m.Name))
 			g.line("\treturn err")
 			g.line("}")
 		} else {
 			g.line("func (c *Client) %s(ctx context.Context, req %s) (%s, error) {", shape.name, shape.request, shape.response)
-			g.line("\treturn plug.Call(ctx, c.raw, %s, req)", methodName(m.Name))
+			g.line("\treturn c.raw.Call(ctx, %s, req)", methodName(m.Name))
 			g.line("}")
 		}
 		g.line("")
@@ -167,7 +167,11 @@ func (g *generator) writeHTTPRoutes() {
 			g.line("\t\tplughttp.NewRoute(server, %s, plughttp.Binding{", methodName(m.Name))
 			g.line("\t\t\tVerb: %s,", strconv.Quote(b.Verb))
 			g.line("\t\t\tPath: %s,", strconv.Quote(b.Path))
-			g.line("\t\t}),")
+			decoder := "nil"
+			if len(m.Fields) > 0 {
+				decoder = "decode" + names.GoMethod(m.Name) + "HTTP"
+			}
+			g.line("\t\t}, %s),", decoder)
 		}
 	}
 	g.line("\t}")

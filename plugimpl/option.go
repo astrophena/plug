@@ -9,7 +9,8 @@ import (
 	"encoding/json/v2"
 )
 
-// Option holds a value that may be absent. Its zero value is None.
+// Option holds an optional value.
+// Its zero value is [None].
 type Option[T any] struct {
 	value T
 	set   bool
@@ -32,8 +33,7 @@ func (o Option[T]) Value() (T, bool) { return o.value, o.set }
 // Present reports whether the option contains a value.
 func (o Option[T]) Present() bool { return o.set }
 
-// IsZero reports whether the option is absent for encoders that honor Go's
-// zero-value convention.
+// IsZero reports whether the option is absent.
 func (o Option[T]) IsZero() bool { return !o.set }
 
 // Or returns the contained value when present or fallback otherwise.
@@ -69,5 +69,5 @@ func (o *Option[T]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Void is the zero-byte value used by methods without a response body.
+// Void represents an empty request or response.
 type Void struct{}

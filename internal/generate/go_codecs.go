@@ -158,6 +158,7 @@ func (g *generator) writeErrorCodec(result string, ctors []plug.ConstructorInfo)
 	)
 
 	g.line("var %s = plugimpl.ErrorCodec{", codec)
+	g.line("\tMatch: match%s,", goName)
 	g.line("\tEncode: func(enc *plugimpl.Encoder, err error) (uint32, bool) {")
 	if len(ctors) == 1 {
 		g.line("\t\tvar v *%s", goName)
@@ -201,35 +202,6 @@ func (g *generator) writeErrorCodec(result string, ctors []plug.ConstructorInfo)
 	}
 	g.line("\t},")
 
-	g.line("\tIdentify: func(err error) (uint32, bool) {")
-	if len(ctors) == 1 {
-		g.line("\t\tvar v *%s", goName)
-	} else {
-		g.line("\t\tvar v %s", goName)
-	}
-	g.line("\t\tif !errors.As(err, &v) {")
-	g.line("\t\t\treturn 0, false")
-	g.line("\t\t}")
-
-	if len(ctors) == 1 {
-		g.line("\t\tif v == nil {")
-		g.line("\t\t\treturn 0, false")
-		g.line("\t\t}")
-		g.line("\t\treturn %s, true", constructorIDName(ctors[0].Name))
-	} else {
-		g.line("\t\tswitch v := v.(type) {")
-		for _, c := range ctors {
-			g.line("\t\tcase *%s:", names.Go(c.Name))
-			g.line("\t\t\treturn %s, true", constructorIDName(c.Name))
-		}
-		g.line("\t\tcase *Unknown%s:", goName)
-		g.line("\t\t\treturn v.ConstructorID, true")
-		g.line("\t\tdefault:")
-		g.line("\t\t\treturn 0, false")
-		g.line("\t\t}")
-	}
-	g.line("\t},")
-
 	g.line("\tDecode: func(dec *plugimpl.Decoder, id uint32) error {")
 	g.line("\t\tswitch id {")
 	for _, c := range ctors {
@@ -260,6 +232,34 @@ func (g *generator) writeErrorCodec(result string, ctors []plug.ConstructorInfo)
 	}
 	g.line("\t\t}")
 	g.line("\t},")
+	g.line("}")
+	g.line("")
+
+	g.line("func match%s(err error) (uint32, error, bool) {", goName)
+	if len(ctors) == 1 {
+		g.line("\tvar v *%s", goName)
+		g.line("\tif errors.As(err, &v) && v != nil {")
+		g.line("\t\treturn %s, v, true", constructorIDName(ctors[0].Name))
+		g.line("\t}")
+	} else {
+		g.line("\tvar v %s", goName)
+		g.line("\tif !errors.As(err, &v) {")
+		g.line("\t\treturn 0, nil, false")
+		g.line("\t}")
+		g.line("\tswitch v := v.(type) {")
+		for _, c := range ctors {
+			g.line("\tcase *%s:", names.Go(c.Name))
+			g.line("\t\tif v != nil {")
+			g.line("\t\t\treturn %s, v, true", constructorIDName(c.Name))
+			g.line("\t\t}")
+		}
+		g.line("\tcase *Unknown%s:", goName)
+		g.line("\t\tif v != nil {")
+		g.line("\t\t\treturn v.ConstructorID, v, true")
+		g.line("\t\t}")
+		g.line("\t}")
+	}
+	g.line("\treturn 0, nil, false")
 	g.line("}")
 	g.line("")
 }

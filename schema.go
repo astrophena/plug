@@ -6,15 +6,15 @@ package plug
 
 import "go.astrophena.name/plug/plugimpl"
 
-// TypeKind classifies a generated schema type.
+// TypeKind classifies a schema type.
 type TypeKind = plugimpl.TypeKind
 
 const (
 	// TypeNewtype is a distinct scalar type.
 	TypeNewtype = plugimpl.TypeNewtype
-	// TypeRecord is a concrete positional record.
+	// TypeRecord is a positional record.
 	TypeRecord = plugimpl.TypeRecord
-	// TypeSum has two or more constructors.
+	// TypeSum is a constructor union.
 	TypeSum = plugimpl.TypeSum
 )
 
@@ -36,7 +36,7 @@ const (
 	TypeExprList      = plugimpl.TypeExprList
 )
 
-// TypeExpr is a type expression in runtime schema metadata.
+// TypeExpr describes a schema type expression.
 type TypeExpr = plugimpl.TypeExpr
 
 // FieldInfo describes a request or constructor field.
@@ -45,7 +45,7 @@ type FieldInfo = plugimpl.FieldInfo
 // MethodInfo describes an RPC method.
 type MethodInfo = plugimpl.MethodInfo
 
-// CategoryInfo groups types and methods for generated documentation.
+// CategoryInfo groups schema types and methods.
 type CategoryInfo = plugimpl.CategoryInfo
 
 // PermissionInfo describes a permission.
@@ -54,5 +54,5 @@ type PermissionInfo = plugimpl.PermissionInfo
 // HTTPBindingInfo describes an HTTP route declared by a method.
 type HTTPBindingInfo = plugimpl.HTTPBindingInfo
 
-// RemoteSchema describes a peer during inspection or a handshake error.
+// RemoteSchema describes a peer's schema.
 type RemoteSchema = plugimpl.RemoteSchema

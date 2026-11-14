@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.astrophena.name/plug"
 	"go.astrophena.name/plug/plugimpl"
@@ -25,12 +26,12 @@ import (
 
 // Options configures the handler returned by New.
 type Options struct {
-	// Authenticate derives a principal from each request. If nil, the
-	// request's context supplies the principal.
+	// Authenticate identifies the caller.
+	// Nil uses the request's context.
 	Authenticate func(*http.Request) (plug.Principal, error)
 
-	// MaxBodyBytes limits JSON request bodies. Zero uses the server's
-	// MaxFrameSize. It must not be negative.
+	// MaxBodyBytes limits JSON request bodies.
+	// Zero uses the server's MaxFrameSize; negative values are invalid.
 	MaxBodyBytes int64
 }
 
@@ -41,7 +42,7 @@ type statusResponse interface {
 // Binding maps a Plug method to an HTTP method and path.
 type Binding = plug.HTTPBindingInfo
 
-// Route serves an HTTP binding. Create routes with NewRoute.
+// Route serves an HTTP binding.
 type Route struct {
 	server  *plug.Server
 	binding Binding
@@ -50,24 +51,44 @@ type Route struct {
 }
 
 // NewRoute returns a route for method and binding.
+// decode fills a request from validated fields.
+// It is required when the method has fields.
 func NewRoute[Request, Response any](
 	server *plug.Server,
 	method plugimpl.Method[Request, Response],
 	binding Binding,
+	decode func(map[string]jsontext.Value, *Request) error,
 ) Route {
 	info := method.Info()
+	if len(info.Fields) > 0 && decode == nil {
+		return Route{
+			server:  server,
+			binding: binding,
+			method:  info,
+		}
+	}
+
+	var pool bufferPool
 	return Route{
 		server:  server,
 		binding: binding,
 		method:  info,
 		handler: func(w http.ResponseWriter, r *http.Request, maxBody int64) {
-			var value Request
-			if err := decodeRequest(r, method.Schema(), info, binding, &value, maxBody); err != nil {
+			fields, err := readFields(r, method.Schema(), info, binding, maxBody)
+			if err != nil {
 				writeError(w, http.StatusBadRequest, "bad_request", err, nil)
 				return
 			}
 
-			response, err := plug.Invoke(r.Context(), server, method, value)
+			var value Request
+			if decode != nil {
+				if err := decode(fields, &value); err != nil {
+					writeError(w, http.StatusBadRequest, "bad_request", err, nil)
+					return
+				}
+			}
+
+			response, err := server.Invoke(r.Context(), method, value)
 			if err != nil {
 				writeMethodError(w, method, err)
 				return
@@ -77,11 +98,12 @@ func NewRoute[Request, Response any](
 				return
 			}
 
-			encoded, err := json.Marshal(response)
+			buf, err := pool.encode(response)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", errors.New("encode response failed"), nil)
 				return
 			}
+			defer pool.put(buf)
 			status, err := responseStatus(response)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", err, nil)
@@ -92,7 +114,7 @@ func NewRoute[Request, Response any](
 			if status != http.StatusOK {
 				w.WriteHeader(status)
 			}
-			w.Write(append(encoded, '\n'))
+			w.Write(buf.data.Bytes())
 		},
 	}
 }
@@ -108,11 +130,13 @@ func responseStatus(response any) (int, error) {
 	return status, nil
 }
 
-// New returns an HTTP handler for routes, which must belong to server and match
-// its schema. Invalid or conflicting HTTP patterns return an error.
+// New seals server and returns an HTTP handler for routes.
+// Routes must belong to server and match its schema.
+// Invalid or conflicting HTTP patterns return an error.
 //
 // Non-void responses with an HTTPStatus() int method select the response status.
-// The status must be between 200 and 599. Other responses use 200; void uses 204.
+// The status must be between 200 and 599.
+// Other responses use 200; void uses 204.
 func New(server *plug.Server, routes []Route, opts Options) (http.Handler, error) {
 	if opts.MaxBodyBytes < 0 {
 		return nil, errors.New("plughttp: MaxBodyBytes cannot be negative")
@@ -178,7 +202,11 @@ func handleRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) (
 	return nil
 }
 
-func decodeRequest(r *http.Request, schema *plug.Schema, method plug.MethodInfo, binding Binding, target any, maxBody int64) error {
+func readFields(r *http.Request, schema *plug.Schema, method plug.MethodInfo, binding Binding, maxBody int64) (map[string]jsontext.Value, error) {
+	if len(method.Fields) == 0 && r.URL.RawQuery == "" && (binding.Verb == http.MethodGet || binding.Verb == http.MethodDelete) {
+		return nil, nil
+	}
+
 	values := make(map[string]jsontext.Value, len(method.Fields))
 
 	if binding.Verb != http.MethodGet && binding.Verb != http.MethodDelete && r.Body != nil {
@@ -191,31 +219,34 @@ func decodeRequest(r *http.Request, schema *plug.Schema, method plug.MethodInfo,
 
 		body, err := io.ReadAll(reader)
 		if err != nil {
-			return fmt.Errorf("read JSON body: %w", err)
+			return nil, fmt.Errorf("read JSON body: %w", err)
 		}
 
 		if int64(len(body)) > maxBody {
-			return fmt.Errorf("JSON body exceeds %d bytes", maxBody)
+			return nil, fmt.Errorf("JSON body exceeds %d bytes", maxBody)
 		}
 
 		if len(bytes.TrimSpace(body)) != 0 {
 			if err := json.Unmarshal(body, &values); err != nil {
-				return fmt.Errorf("decode JSON body: %w", err)
+				return nil, fmt.Errorf("decode JSON body: %w", err)
 			}
 			if values == nil {
-				return errors.New("JSON body must be an object")
+				return nil, errors.New("JSON body must be an object")
 			}
 		}
 	}
 
-	query := r.URL.Query()
-	known := make(map[string]bool, len(method.Fields))
-	for _, field := range method.Fields {
-		known[field.Name] = true
-	}
-	for name := range query {
-		if !known[name] {
-			return fmt.Errorf("unknown query parameter %q", name)
+	var query map[string][]string
+	if r.URL.RawQuery != "" {
+		query = r.URL.Query()
+		known := make(map[string]bool, len(method.Fields))
+		for _, field := range method.Fields {
+			known[field.Name] = true
+		}
+		for name := range query {
+			if !known[name] {
+				return nil, fmt.Errorf("unknown query parameter %q", name)
+			}
 		}
 	}
 
@@ -230,24 +261,16 @@ func decodeRequest(r *http.Request, schema *plug.Schema, method plug.MethodInfo,
 		}
 		raw, err := textJSON(schema, field.Type, text)
 		if err != nil {
-			return fmt.Errorf("field %s: %w", field.Name, err)
+			return nil, fmt.Errorf("field %s: %w", field.Name, err)
 		}
 		values[field.Name] = raw
 	}
 
 	if err := validateJSONFields(schema, method.Fields, values, false); err != nil {
-		return err
+		return nil, err
 	}
 
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return fmt.Errorf("assemble request: %w", err)
-	}
-	if err := json.Unmarshal(encoded, target); err != nil {
-		return fmt.Errorf("decode request fields: %w", err)
-	}
-
-	return nil
+	return values, nil
 }
 
 func validateJSONValue(schema *plug.Schema, expr plug.TypeExpr, raw jsontext.Value) error {
@@ -370,10 +393,10 @@ func textJSON(schema *plug.Schema, expr plug.TypeExpr, values []string) (jsontex
 	}
 
 	if len(values) > 1 {
-		return nil, fmt.Errorf("duplicate parameter")
+		return nil, errors.New("duplicate parameter")
 	}
 	if len(values) != 1 {
-		return nil, fmt.Errorf("expected one value")
+		return nil, errors.New("expected one value")
 	}
 	return scalarJSON(schema, expr, values[0])
 }
@@ -428,13 +451,16 @@ func writeMethodError[Request, Response any](
 	method plugimpl.Method[Request, Response],
 	err error,
 ) {
-	if info, ok := method.ErrorInfo(err); ok {
-		status := info.HTTPStatus
-		if status == 0 {
-			status = http.StatusBadRequest
+	if match := method.Errors().Match; match != nil {
+		id, value, ok := match(err)
+		if info, found := plugimpl.LookupConstructor(method.Schema(), id); ok && found && value != nil {
+			status := info.HTTPStatus
+			if status == 0 {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, info.Name, value, value)
+			return
 		}
-		writeError(w, status, info.Name, err, err)
-		return
 	}
 
 	if remote, ok := errors.AsType[*plug.RemoteError](err); ok {
@@ -476,4 +502,37 @@ func writeError(w http.ResponseWriter, status int, code string, err error, detai
 		Message: msg,
 		Details: details,
 	})
+}
+
+const maxRetainedBufferSize = 64 * 1024
+
+type jsonBuffer struct {
+	data bytes.Buffer
+	enc  *jsontext.Encoder
+}
+
+type bufferPool struct {
+	pool sync.Pool
+}
+
+func (p *bufferPool) encode(value any) (*jsonBuffer, error) {
+	buf, _ := p.pool.Get().(*jsonBuffer)
+	if buf == nil {
+		buf = &jsonBuffer{}
+		buf.enc = jsontext.NewEncoder(&buf.data)
+	}
+
+	buf.data.Reset()
+	buf.enc.Reset(&buf.data)
+	if err := json.MarshalEncode(buf.enc, value); err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
+func (p *bufferPool) put(buf *jsonBuffer) {
+	if buf.data.Cap() <= maxRetainedBufferSize {
+		p.pool.Put(buf)
+	}
 }

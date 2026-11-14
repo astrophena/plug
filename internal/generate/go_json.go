@@ -112,7 +112,27 @@ func (g *goGenerator) writeJSON() {
 	}
 	for _, m := range g.methods {
 		g.writeJSONUnmarshal(names.GoMethod(m.Name)+"Request", m.Fields)
+		if g.native && len(m.HTTP) > 0 && len(m.Fields) > 0 {
+			g.writeHTTPFields(names.GoMethod(m.Name), m.Fields)
+		}
 	}
+}
+
+func (g *goGenerator) hasHTTPFields() bool {
+	return g.native && slices.ContainsFunc(g.methods, func(m plug.MethodInfo) bool {
+		return len(m.HTTP) > 0 && len(m.Fields) > 0
+	})
+}
+
+func (g *goGenerator) writeHTTPFields(name string, fields []plug.FieldInfo) {
+	g.line("func decode%sHTTP(fields map[string]jsontext.Value, v *%sRequest) error {", name, name)
+	var counter int
+	for _, field := range fields {
+		g.writeJSONDecode(field.Type, "v."+names.Go(field.Name), fmt.Sprintf("fields[%q]", field.Name), "\t", field.Name, "", &counter)
+	}
+	g.line("\treturn nil")
+	g.line("}")
+	g.line("")
 }
 
 func (g *goGenerator) hasSumFields() bool {

@@ -6,7 +6,8 @@ package plug
 
 import "go.astrophena.name/plug/plugimpl"
 
-// Option holds a value that may be absent. Its zero value is [None].
+// Option holds an optional value.
+// Its zero value is [None].
 type Option[T any] = plugimpl.Option[T]
 
 // Some returns an [Option] containing value.

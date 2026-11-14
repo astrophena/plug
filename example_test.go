@@ -16,7 +16,7 @@ import (
 )
 
 func ExampleNewServer() {
-	opts := plug.ServerOptions{
+	server, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
 		Security: plug.Security{
 			Authenticate: func(context.Context, net.Conn) (plug.Principal, error) {
 				return plug.Principal{
@@ -30,83 +30,64 @@ func ExampleNewServer() {
 				return nil
 			},
 		},
-	}
-
-	server, err := plug.NewServer(&greeter.Schema, opts)
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	if err := greeter.RegisterHandlers(server, greeter.Handlers{
-		GetUser: func(_ context.Context, request greeter.GetUserRequest) (greeter.User, error) {
-			if request.ID == 0 {
-				return greeter.User{}, &greeter.NotFound{
-					ID: request.ID,
-				}
-			}
+		GetUser: func(_ context.Context, req greeter.GetUserRequest) (greeter.User, error) {
 			return greeter.User{
-				ID:   request.ID,
+				ID:   req.ID,
 				Name: "Ada",
 				Role: &greeter.Guest{},
 			}, nil
 		},
-		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) {
-			return []greeter.User{}, nil
-		},
-		Ping: func(context.Context) error {
-			return nil
-		},
+		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) { return nil, nil },
+		Ping:      func(context.Context) error { return nil },
 	}); err != nil {
 		log.Fatal(err)
-		return
 	}
-
-	lis, err := net.Listen("unix", "/run/greeter/plug.sock")
+	listener, err := net.Listen("unix", "/run/greeter/plug.sock")
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := server.Serve(context.Background(), lis); err != nil {
+	if err := server.Serve(context.Background(), listener); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func ExampleDial() {
-	c, err := plug.Dial(context.Background(), "unix", "/run/greeter/plug.sock", &greeter.Schema, plug.ClientOptions{})
+	ctx := context.Background()
+	c, err := plug.Dial(ctx, "unix", "/run/greeter/plug.sock", &greeter.Schema, plug.ClientOptions{})
 	if err != nil {
 		log.Print(err)
 		return
 	}
-	defer func() {
-		if err := c.Close(); err != nil {
-			log.Fatalf("close Plug client: %v", err)
-		}
-	}()
-
-	client := greeter.NewClient(c)
-
-	user, err := client.GetUser(context.Background(), greeter.GetUserRequest{
+	defer c.Close()
+	user, err := greeter.NewClient(c).GetUser(ctx, greeter.GetUserRequest{
 		ID: 42,
 	})
 	if err != nil {
 		if notFound, ok := errors.AsType[*greeter.NotFound](err); ok {
-			log.Fatalf("user %d was not found", notFound.ID)
+			log.Printf("user %d was not found", notFound.ID)
+		} else {
+			log.Print(err)
 		}
-		log.Fatal(err)
+		return
 	}
-
 	log.Printf("received %s", user.Name)
 }
 
 func ExampleInspect() {
 	conn, err := net.Dial("unix", "/run/greeter/plug.sock")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
-
 	remote, err := plug.Inspect(context.Background(), conn)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
-
-	log.Printf("server uses Plug wire version %d and schema family %x", remote.Version, remote.Family)
+	log.Printf("wire version %d, schema family %x", remote.Version, remote.Family)
 }

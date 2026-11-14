@@ -2,457 +2,377 @@
 // Use of this source code is governed by the ISC
 // license that can be found in the LICENSE.md file.
 
-package plughttp_test
+package plughttp
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
+	"go.astrophena.name/base/testutil"
 	"go.astrophena.name/plug"
-	"go.astrophena.name/plug/example/greeter"
-	"go.astrophena.name/plug/plughttp"
+	"go.astrophena.name/plug/plugimpl"
 )
 
-func TestNew(t *testing.T) {
-	cases := map[string]struct {
-		server func(*testing.T) *plug.Server
-		routes func(*plug.Server) []plughttp.Route
-		opts   plughttp.Options
-		want   string
+func TestRoutes(t *testing.T) {
+	for name, paths := range map[string][]string{
+		"invalid":    {"/users/prefix{id}"},
+		"equivalent": {"/users/{id}", "/users/{name}"},
+		"overlap":    {"/users/{id}", "/{name}/settings"},
+		"duplicate":  {"/ping", "/ping"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, routes := routeServer(t, paths, nil)
+			if _, err := New(s, routes, Options{}); err == nil {
+				t.Fatal("accepted invalid or conflicting routes")
+			}
+		})
+	}
+
+	s, routes := routeServer(t, []string{"/ping"}, nil)
+	_, other := routeServer(t, []string{"/ping"}, nil)
+	for name, tc := range map[string]struct {
+		routes []Route
+		opts   Options
 	}{
-		"nil server": {
-			server: func(*testing.T) *plug.Server { return nil },
-			want:   "server is nil",
+		"empty route": {
+			routes: []Route{{}},
+		},
+		"foreign server": {
+			routes: other,
 		},
 		"negative body limit": {
-			opts: plughttp.Options{
+			routes: routes,
+			opts: Options{
 				MaxBodyBytes: -1,
 			},
-			want: "MaxBodyBytes cannot be negative",
 		},
-		"missing handlers": {
-			server: func(t *testing.T) *plug.Server {
-				s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				return s
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New(s, tc.routes, tc.opts); err == nil {
+				t.Fatal("accepted invalid route configuration")
+			}
+		})
+	}
+}
+
+func TestEncodeError(t *testing.T) {
+	binding := Binding{
+		Verb: http.MethodGet,
+		Path: "/value",
+	}
+	sch := &plug.Schema{
+		Package: "buffered",
+		Major:   1,
+		Family:  plugimpl.FamilyFingerprint("buffered", 1),
+		Source:  "package buffered version 1\n",
+		Methods: []plug.MethodInfo{
+			{
+				ID:       1,
+				Name:     "buffered.value",
+				Public:   true,
+				Response: plugimpl.PrimitiveType("string"),
+				HTTP:     []Binding{binding},
 			},
-			want: "missing handlers",
-		},
-		"empty route": {
-			routes: func(*plug.Server) []plughttp.Route { return []plughttp.Route{{}} },
-			want:   "has no handler",
-		},
-		"different server": {
-			routes: func(*plug.Server) []plughttp.Route {
-				return greeter.HTTPRoutes(newGreeterServer(t))
-			},
-			want: "belongs to a different server",
-		},
-		"duplicate route": {
-			routes: func(s *plug.Server) []plughttp.Route {
-				r := greeter.HTTPRoutes(s)[0]
-				return []plughttp.Route{r, r}
-			},
-			want: "invalid route",
 		},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			newServer := tc.server
-			if newServer == nil {
-				newServer = newGreeterServer
-			}
-			s := newServer(t)
-			var routes []plughttp.Route
-			if tc.routes != nil {
-				routes = tc.routes(s)
-			}
-
-			_, err := plughttp.New(s, routes, tc.opts)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("New() error = %v, want containing %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestHTTPRoutes(t *testing.T) {
-	server := newGreeterServer(t)
-	cases := map[string]struct {
-		path         string
-		authenticate func(*http.Request) (plug.Principal, error)
-		status       int
-		contains     string
-	}{
-		"application error": {
-			path:         "/v1/users/1",
-			authenticate: principal("allowed"),
-			status:       http.StatusNotFound,
-			contains:     `"code":"notFound"`,
-		},
-		"authorized": {
-			path:         "/v1/users/42",
-			authenticate: principal("allowed"),
-			status:       http.StatusOK,
-			contains:     `"type":"admin"`,
-		},
-		"denied": {
-			path:         "/v1/users/42",
-			authenticate: principal("denied"),
-			status:       http.StatusForbidden,
-			contains:     `"code":"permission_denied"`,
-		},
-		"unauthenticated": {
-			path:     "/v1/users/42",
-			status:   http.StatusUnauthorized,
-			contains: `"code":"unauthenticated"`,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			handler, err := plughttp.New(server, greeter.HTTPRoutes(server), plughttp.Options{
-				Authenticate: tc.authenticate,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, request)
-			if response.Code != tc.status || !strings.Contains(response.Body.String(), tc.contains) {
-				t.Fatalf("response = %d %s", response.Code, response.Body.String())
-			}
-			if tc.status != http.StatusOK {
-				return
-			}
-
-			var user greeter.User
-			if err := user.UnmarshalJSON(response.Body.Bytes()); err != nil {
-				t.Fatal(err)
-			}
-			role, ok := user.Role.(*greeter.Admin)
-			if user.ID != 42 || !ok || role.Level != 7 {
-				t.Fatalf("user = %#v", user)
-			}
-		})
-	}
-}
-
-func TestHTTPRequests(t *testing.T) {
-	server := newGreeterServer(t)
-	handler, err := plughttp.New(server, greeter.HTTPRoutes(server), plughttp.Options{
-		Authenticate: principal("allowed"),
-	})
+	s, err := plug.NewServer(sch, plug.ServerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	cases := map[string]struct {
-		method string
-		path   string
-		body   string
-		status int
-		want   string
-	}{
-		"JSON body": {
-			method: http.MethodPost,
-			path:   "/v1/get-user",
-			body:   `{"id":42}`,
-			status: http.StatusOK,
-			want:   `"id":42`,
-		},
-		"query overrides body": {
-			method: http.MethodPost,
-			path:   "/v1/get-user?id=42",
-			body:   `{"id":2}`,
-			status: http.StatusOK,
-			want:   `"id":42`,
-		},
-		"path overrides query": {
-			method: http.MethodGet,
-			path:   "/v1/users/42?id=2",
-			status: http.StatusOK,
-			want:   `"id":42`,
-		},
-		"null body with query override": {
-			method: http.MethodPost,
-			path:   "/v1/get-user?id=42",
-			body:   "null",
-			status: http.StatusBadRequest,
-		},
-		"duplicate body field": {
-			method: http.MethodPost,
-			path:   "/v1/get-user?id=42",
-			body:   `{"id":1,"id":42}`,
-			status: http.StatusBadRequest,
-		},
-		"trailing JSON value": {
-			method: http.MethodPost,
-			path:   "/v1/get-user?id=42",
-			body:   `{"id":42}{}`,
-			status: http.StatusBadRequest,
-		},
-		"missing required field": {
-			method: http.MethodPost,
-			path:   "/v1/get-user",
-			body:   `{}`,
-			status: http.StatusBadRequest,
-			want:   "field id is required",
-		},
-		"null required field": {
-			method: http.MethodPost,
-			path:   "/v1/get-user",
-			body:   `{"id":null}`,
-			status: http.StatusBadRequest,
-			want:   "field id: value is required",
-		},
-		"unknown body field": {
-			method: http.MethodPost,
-			path:   "/v1/get-user",
-			body:   `{"id":42,"unknown_field":"val"}`,
-			status: http.StatusBadRequest,
-			want:   "unknown field",
-		},
-		"unknown query parameter": {
-			method: http.MethodGet,
-			path:   "/v1/users?limit=10&unknown=val",
-			status: http.StatusBadRequest,
-			want:   "unknown query parameter",
-		},
-		"duplicate query parameter": {
-			method: http.MethodGet,
-			path:   "/v1/users?limit=10&limit=20",
-			status: http.StatusBadRequest,
-			want:   "duplicate parameter",
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.want) {
-				t.Fatalf("response = %d %s; want %d containing %q", w.Code, w.Body.String(), tc.status, tc.want)
-			}
-		})
-	}
-}
-
-func TestHTTPEmptyList(t *testing.T) {
-	server := newGreeterServer(t)
-	handler, err := plughttp.New(server, greeter.HTTPRoutes(server), plughttp.Options{
-		Authenticate: principal("allowed"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/users?limit=0", nil))
-	if response.Code != http.StatusOK || response.Body.String() != "[]\n" {
-		t.Fatalf("response = %d %s; want 200 []", response.Code, response.Body.String())
-	}
-}
-
-func TestHTTPBodyLimit(t *testing.T) {
-	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Limits: plug.Limits{
-			MaxFrameSize: 64,
-		},
-		Security: plug.Security{
-			Authorize: func(context.Context, plug.Principal, string, plug.MethodInfo, any) error { return nil },
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := greeter.RegisterHandlers(s, greeter.Handlers{
-		GetUser: func(context.Context, greeter.GetUserRequest) (greeter.User, error) {
-			return greeter.User{
-				Role: &greeter.Guest{},
-			}, nil
-		},
-		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) { return nil, nil },
-		Ping:      func(context.Context) error { return nil },
-	}); err != nil {
-		t.Fatal(err)
-	}
-	routes := greeter.HTTPRoutes(s)
-
-	const body = `{"id":42}`
-	padded := strings.Repeat(" ", 64) + body
-	cases := map[string]struct {
-		body   string
-		limit  int64
-		status int
-	}{
-		"at limit": {
-			body:   body,
-			limit:  int64(len(body)),
-			status: http.StatusOK,
-		},
-		"over limit": {
-			body:   body,
-			limit:  int64(len(body) - 1),
-			status: http.StatusBadRequest,
-		},
-		"default frame limit": {
-			body:   padded,
-			status: http.StatusBadRequest,
-		},
-		"larger than frame limit": {
-			body:   padded,
-			limit:  int64(len(padded)),
-			status: http.StatusOK,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			h, err := plughttp.New(s, routes, plughttp.Options{
-				Authenticate: principal("allowed"),
-				MaxBodyBytes: tc.limit,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/get-user", strings.NewReader(tc.body)))
-			if w.Code != tc.status {
-				t.Fatalf("response = %d %s; want %d", w.Code, w.Body.String(), tc.status)
-			}
-		})
-	}
-}
-
-func TestHTTPShutdown(t *testing.T) {
-	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Security: plug.Security{
-			Authorize: func(context.Context, plug.Principal, string, plug.MethodInfo, any) error { return nil },
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	m := plugimpl.NewMethod(sch, 1, plugimpl.VoidCodec, plugimpl.Codec[jsonValue]{}, plugimpl.ErrorCodec{})
 	var (
-		started  = make(chan struct{})
-		canceled = make(chan struct{})
-		release  = make(chan struct{})
-		calls    atomic.Int32
+		value jsonValue
+		batch []plugimpl.Registration
 	)
-	defer func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
-	}()
-	if err := greeter.RegisterHandlers(s, greeter.Handlers{
-		GetUser:   func(context.Context, greeter.GetUserRequest) (greeter.User, error) { return greeter.User{}, nil },
-		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) { return nil, nil },
-		Ping: func(ctx context.Context) error {
-			calls.Add(1)
-			close(started)
+	if err := plugimpl.AppendHandler(&batch, m, func(context.Context, plugimpl.Void) (jsonValue, error) { return value, nil }, "Value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterHandlers(batch); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(s, []Route{NewRoute(s, m, binding, nil)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Later responses must not contain bytes from a failed or earlier response.
+	for _, tc := range []struct {
+		value  jsonValue
+		status int
+		body   string
+	}{
+		{
+			"first",
+			http.StatusOK,
+			"\"first\"\n",
+		},
+		{
+			"invalid JSON",
+			http.StatusInternalServerError,
+			"{\"code\":\"internal\",\"message\":\"internal server error\"}\n",
+		},
+		{
+			"after",
+			http.StatusOK,
+			"\"after\"\n",
+		},
+	} {
+		value = tc.value
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/value", nil))
+		testutil.AssertEqual(t, w.Code, tc.status)
+		testutil.AssertEqual(t, w.Body.String(), tc.body)
+		testutil.AssertEqual(t, w.Header().Get("Content-Type"), "application/json")
+	}
+}
+
+func TestJSONSum(t *testing.T) {
+	sch := &plug.Schema{
+		Types: []plug.TypeInfo{
+			{
+				Name: "Role",
+				Kind: plug.TypeSum,
+				Constructors: []plug.ConstructorInfo{
+					{
+						Name: "guest",
+					},
+					{
+						Name: "admin",
+						Fields: []plug.FieldInfo{
+							{
+								Name: "level",
+								Type: plugimpl.PrimitiveType("u32"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	cases := map[string]struct {
+		body string
+		ok   bool
+	}{
+		"fieldless": {
+			`{"type":"guest"}`,
+			true,
+		},
+		"fields": {
+			`{"type":"admin","level":7}`,
+			true,
+		},
+		"missing tag": {
+			`{}`,
+			false,
+		},
+		"numeric tag": {
+			`{"type":1}`,
+			false,
+		},
+		"unknown": {
+			`{"type":"future"}`,
+			false,
+		},
+		"missing field": {
+			`{"type":"admin"}`,
+			false,
+		},
+		"unknown field": {
+			`{"type":"guest","level":7}`,
+			false,
+		},
+		"null": {
+			`null`,
+			false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := validateJSONValue(sch, plugimpl.NamedType("Role"), jsontext.Value(tc.body))
+			testutil.AssertEqual(t, err == nil, tc.ok)
+		})
+	}
+}
+
+func TestErrorDetails(t *testing.T) {
+	for name, tc := range map[string]struct {
+		details any
+		want    string
+	}{
+		"protocol": {
+			nil,
+			`{"code":"oops","message":"oops"}` + "\n",
+		},
+		"declared": {
+			struct{}{},
+			`{"code":"oops","message":"oops","details":{}}` + "\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			writeError(w, http.StatusBadRequest, "oops", errors.New("oops"), tc.details)
+			testutil.AssertEqual(t, w.Body.String(), tc.want)
+		})
+	}
+}
+
+func TestPathValues(t *testing.T) {
+	sch := &plug.Schema{}
+	m := plug.MethodInfo{
+		Fields: []plug.FieldInfo{
+			{
+				Name: "repository",
+				Type: plugimpl.PrimitiveType("string"),
+			},
+			{
+				Name: "path",
+				Type: plugimpl.OptionalType(plugimpl.PrimitiveType("string")),
+			},
+		},
+	}
+	binding := Binding{
+		Verb: "GET",
+		Path: "/repos/{repository}/contents/{path...}",
+	}
+	for name, path := range map[string]string{"root": "", "nested": "roles/git/README.md", "literal percent": "docs/a%2Fb"} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/?path=ignored", nil)
+			r.SetPathValue("repository", "aur/nested/repo")
+			r.SetPathValue("path", path)
+			fields, err := readFields(r, sch, m, binding, 1024)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var repo, got string
+			if err := json.Unmarshal(fields["repository"], &repo); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(fields["path"], &got); err != nil {
+				t.Fatal(err)
+			}
+			testutil.AssertEqual(t, repo, "aur/nested/repo")
+			testutil.AssertEqual(t, got, path)
+		})
+	}
+}
+
+func TestShutdown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var (
+			release  = make(chan struct{})
+			unblock  = sync.OnceFunc(func() { close(release) })
+			calls    int
+			canceled bool
+		)
+		defer unblock()
+		s, routes := routeServer(t, []string{"/ping"}, func(ctx context.Context) error {
+			calls++
 			<-ctx.Done()
-			close(canceled)
+			canceled = true
 			<-release
 			return nil
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	h, err := plughttp.New(s, greeter.HTTPRoutes(s), plughttp.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
+		})
+		h, err := New(s, routes, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan int, 1)
+
+		go func() {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequestWithContext(s.Context(), "GET", "/ping", nil))
+			done <- w.Code
+		}()
+		synctest.Wait()
+		testutil.AssertEqual(t, calls, 1)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := s.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Shutdown() = %v; handler is still active", err)
+		}
+		synctest.Wait()
+		testutil.AssertEqual(t, canceled, true)
+
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-		done <- w
-	}()
-	<-started
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/ping", nil))
+		testutil.AssertEqual(t, w.Code, http.StatusInternalServerError)
+		testutil.AssertEqual(t, calls, 1)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := s.Shutdown(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Shutdown() = %v; want context.Canceled while the handler is active", err)
-	}
-	select {
-	case <-canceled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Shutdown did not cancel the HTTP handler")
-	}
-	if err := s.Shutdown(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("second Shutdown() = %v; want context.Canceled while the handler is active", err)
-	}
-
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if w.Code != http.StatusInternalServerError || calls.Load() != 1 {
-		t.Fatalf("request after shutdown = %d, %d handler calls; want 500, 1", w.Code, calls.Load())
-	}
-
-	close(release)
-	if err := s.Shutdown(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if w := <-done; w.Code != http.StatusNoContent {
-		t.Fatalf("active request = %d %s; want 204", w.Code, w.Body.String())
-	}
+		unblock()
+		if err := s.Shutdown(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		testutil.AssertEqual(t, <-done, http.StatusNoContent)
+	})
 }
 
-func newGreeterServer(t *testing.T) *plug.Server {
+type jsonValue string
+
+func (v jsonValue) MarshalJSON() ([]byte, error) {
+	if v == "invalid JSON" {
+		return []byte(`"partial`), errors.New("private marshal error")
+	}
+	return json.Marshal(string(v))
+}
+
+func routeServer(t *testing.T, paths []string, h func(context.Context) error) (*plug.Server, []Route) {
 	t.Helper()
-	server, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Security: plug.Security{
-			Authorize: func(_ context.Context, principal plug.Principal, permission string, _ plug.MethodInfo, _ any) error {
-				if principal.Subject != "allowed" || permission != greeter.PermissionUserRead {
-					return errors.New("access denied")
-				}
-				return nil
+	var bindings []Binding
+	for _, path := range paths {
+		bindings = append(bindings, Binding{
+			Verb: "GET",
+			Path: path,
+		})
+	}
+	sch := &plug.Schema{
+		Package: "test",
+		Major:   1,
+		Family:  plugimpl.FamilyFingerprint("test", 1),
+		Source:  "package test version 1\ntest.call -> void public\n",
+		Methods: []plug.MethodInfo{
+			{
+				ID:       1,
+				Name:     "test.call",
+				Public:   true,
+				Response: plugimpl.PrimitiveType("void"),
+				HTTP:     bindings,
 			},
 		},
-	})
+	}
+	s, err := plug.NewServer(sch, plug.ServerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := greeter.RegisterHandlers(server, greeter.Handlers{
-		GetUser: func(_ context.Context, request greeter.GetUserRequest) (greeter.User, error) {
-			if request.ID == 1 {
-				return greeter.User{}, &greeter.NotFound{
-					ID: request.ID,
-				}
-			}
-			return greeter.User{
-				ID:     request.ID,
-				Name:   "Ada",
-				Labels: []string{"test"},
-				Role: &greeter.Admin{
-					Level: 7,
-				},
-			}, nil
-		},
-		ListUsers: func(context.Context, greeter.ListUsersRequest) ([]greeter.User, error) { return nil, nil },
-		Ping:      func(context.Context) error { return nil },
-	}); err != nil {
+	t.Cleanup(func() {
+		if err := s.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	if h == nil {
+		h = func(context.Context) error { return nil }
+	}
+	var (
+		m    = plugimpl.NewMethod(sch, 1, plugimpl.VoidCodec, plugimpl.VoidCodec, plugimpl.ErrorCodec{})
+		regs []plugimpl.Registration
+	)
+	if err := plugimpl.AppendHandlerNoReqVoid(&regs, m, h, "Call"); err != nil {
 		t.Fatal(err)
 	}
-	return server
-}
-
-func principal(subject string) func(*http.Request) (plug.Principal, error) {
-	return func(*http.Request) (plug.Principal, error) {
-		return plug.Principal{
-			Subject: subject,
-		}, nil
+	if err := s.RegisterHandlers(regs); err != nil {
+		t.Fatal(err)
 	}
+	var routes []Route
+	for _, binding := range bindings {
+		routes = append(routes, NewRoute(s, m, binding, nil))
+	}
+	return s, routes
 }

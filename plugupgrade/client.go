@@ -25,25 +25,28 @@ import (
 
 const maximumErrorBody = 64 << 10
 
-// Dialer opens Plug connections through HTTP/1.1 Upgrade or WebSocket.
+// Dialer opens Plug connections over HTTP Upgrade or WebSocket.
 type Dialer struct {
-	// Header supplies request headers. Required handshake values take precedence.
+	// Header supplies request headers.
+	// Required handshake values take precedence.
 	Header http.Header
 
-	// NetDialer supplies TCP dialing. If nil, a default dialer is used.
+	// NetDialer dials TCP connections.
+	// Nil uses a default dialer.
 	NetDialer *net.Dialer
 
-	// Proxy selects a proxy for an HTTP URL. WebSocket URLs are mapped to http
-	// or https. If nil, ProxyFromEnvironment is used.
+	// Proxy selects a proxy for an HTTP URL.
+	// WebSocket URLs use http or https schemes.
+	// Nil uses [ProxyFromEnvironment].
 	Proxy func(*url.URL) (*url.URL, error)
 
-	// TLSConfig supplies TLS settings. Connections use a clone restricted to
-	// HTTP/1.1.
+	// TLSConfig supplies TLS settings, cloned and restricted to HTTP/1.1.
 	TLSConfig *tls.Config
 }
 
-// DialContext opens endpoint, a complete http, https, ws, or wss URL.
-// The context bounds dialing and the upgrade. The caller closes the connection.
+// DialContext opens an http, https, ws, or wss URL.
+// ctx controls dialing and the upgrade.
+// The caller must close the connection.
 //
 // A WebSocket deadline that expires during I/O closes the connection.
 func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.Conn, err error) {
@@ -55,7 +58,7 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	target, address, err := upgradeTarget(endpoint)
+	target, addr, err := upgradeTarget(endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +66,7 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 		return d.dialWS(ctx, target)
 	}
 
-	conn, err := d.dialConn(ctx, target, address)
+	conn, err := d.dialConn(ctx, target, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -84,15 +87,15 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 	}
 
 	if target.Scheme == "https" {
-		config := d.tlsConfig(target.Hostname())
-		tlsConn := tls.Client(conn, config)
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
+		cfg := d.tlsConfig(target.Hostname())
+		tc := tls.Client(conn, cfg)
+		if err := tc.HandshakeContext(ctx); err != nil {
 			return nil, fmt.Errorf("plugupgrade: TLS handshake: %w", err)
 		}
-		conn = tlsConn
+		conn = tc
 	}
 
-	request := &http.Request{
+	req := &http.Request{
 		Method:     http.MethodGet,
 		URL:        target,
 		Host:       target.Host,
@@ -101,26 +104,26 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 		ProtoMinor: 1,
 		Header:     d.Header.Clone(),
 	}
-	if request.Header == nil {
-		request.Header = make(http.Header)
+	if req.Header == nil {
+		req.Header = make(http.Header)
 	}
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", protocolName)
-	if err := request.Write(conn); err != nil {
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", protocolName)
+	if err := req.Write(conn); err != nil {
 		return nil, fmt.Errorf("plugupgrade: write upgrade request: %w", err)
 	}
 
 	reader := bufio.NewReader(conn)
-	response, err := http.ReadResponse(reader, request)
+	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
 		return nil, fmt.Errorf("plugupgrade: read upgrade response: %w", err)
 	}
-	if response.StatusCode != http.StatusSwitchingProtocols {
-		message, readErr := io.ReadAll(io.LimitReader(response.Body, maximumErrorBody+1))
-		closeErr := response.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		message, readErr := io.ReadAll(io.LimitReader(resp.Body, maximumErrorBody+1))
+		closeErr := resp.Body.Close()
 		if readErr != nil {
 			return nil, errors.Join(
-				fmt.Errorf("plugupgrade: server rejected upgrade with %s: read response: %w", response.Status, readErr),
+				fmt.Errorf("plugupgrade: server rejected upgrade with %s: read response: %w", resp.Status, readErr),
 				closeErr,
 			)
 		}
@@ -129,12 +132,12 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 		}
 		detail := strings.TrimSpace(string(message))
 		if detail == "" {
-			return nil, errors.Join(fmt.Errorf("plugupgrade: server rejected upgrade with %s", response.Status), closeErr)
+			return nil, errors.Join(fmt.Errorf("plugupgrade: server rejected upgrade with %s", resp.Status), closeErr)
 		}
-		return nil, errors.Join(fmt.Errorf("plugupgrade: server rejected upgrade with %s: %s", response.Status, detail), closeErr)
+		return nil, errors.Join(fmt.Errorf("plugupgrade: server rejected upgrade with %s: %s", resp.Status, detail), closeErr)
 	}
-	if !headerHasToken(response.Header, "Connection", "upgrade") ||
-		!strings.EqualFold(strings.TrimSpace(response.Header.Get("Upgrade")), protocolName) {
+	if !headerHasToken(resp.Header, "Connection", "upgrade") ||
+		!strings.EqualFold(strings.TrimSpace(resp.Header.Get("Upgrade")), protocolName) {
 		return nil, errors.New("plugupgrade: invalid switching-protocols response")
 	}
 	if !stopCancel() || ctx.Err() != nil {
@@ -150,7 +153,7 @@ func (d *Dialer) DialContext(ctx context.Context, endpoint string) (result net.C
 	}, nil
 }
 
-func (d *Dialer) dialConn(ctx context.Context, target *url.URL, address string) (net.Conn, error) {
+func (d *Dialer) dialConn(ctx context.Context, target *url.URL, addr string) (net.Conn, error) {
 	proxyFunc := d.Proxy
 	if proxyFunc == nil {
 		proxyFunc = ProxyFromEnvironment
@@ -162,79 +165,68 @@ func (d *Dialer) dialConn(ctx context.Context, target *url.URL, address string) 
 	if proxyURL != nil {
 		switch proxyURL.Scheme {
 		case "socks5", "socks5h":
-			return d.dialSOCKS5Proxy(ctx, proxyURL, address)
+			return d.dialSOCKS5Proxy(ctx, proxyURL, addr)
 		case "http", "https":
-			return d.dialHTTPProxy(ctx, proxyURL, address)
+			return d.dialHTTPProxy(ctx, proxyURL, addr)
 		default:
 			return nil, fmt.Errorf("plugupgrade: unsupported proxy scheme %q", proxyURL.Scheme)
 		}
 	}
 
-	conn, err := d.netDialer().DialContext(ctx, "tcp", address)
+	conn, err := d.netDialer().DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("plugupgrade: dial %s: %w", address, err)
+		return nil, fmt.Errorf("plugupgrade: dial %s: %w", addr, err)
 	}
 	return conn, nil
 }
 
-func (d *Dialer) dialSOCKS5Proxy(ctx context.Context, proxyURL *url.URL, targetAddress string) (net.Conn, error) {
-	socksDialer, err := proxy.FromURL(proxyURL, d.netDialer())
+func (d *Dialer) dialSOCKS5Proxy(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn, error) {
+	sd, err := proxy.FromURL(proxyURL, d.netDialer())
 	if err != nil {
 		return nil, fmt.Errorf("plugupgrade: SOCKS5 proxy %s: %w", proxyURL.Redacted(), err)
 	}
-	conn, err := socksDialer.(proxy.ContextDialer).DialContext(ctx, "tcp", targetAddress)
+	conn, err := sd.(proxy.ContextDialer).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("plugupgrade: dial %s via SOCKS5 proxy %s: %w", targetAddress, proxyURL.Redacted(), err)
+		return nil, fmt.Errorf("plugupgrade: dial %s via SOCKS5 proxy %s: %w", addr, proxyURL.Redacted(), err)
 	}
 	return conn, nil
 }
 
-func (d *Dialer) dialHTTPProxy(ctx context.Context, proxyURL *url.URL, targetAddress string) (net.Conn, error) {
-	proxyHost := proxyURL.Hostname()
-	proxyPort := proxyURL.Port()
-	if proxyPort == "" {
-		if proxyURL.Scheme == "https" {
-			proxyPort = "443"
-		} else {
-			proxyPort = "80"
-		}
-	}
-	proxyAddress := net.JoinHostPort(proxyHost, proxyPort)
-
-	pConn, err := d.netDialer().DialContext(ctx, "tcp", proxyAddress)
+func (d *Dialer) dialHTTPProxy(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn, error) {
+	conn, err := d.netDialer().DialContext(ctx, "tcp", urlAddr(proxyURL))
 	if err != nil {
 		return nil, fmt.Errorf("plugupgrade: dial HTTP proxy %s: %w", proxyURL.Redacted(), err)
 	}
-	return d.connectProxy(ctx, pConn, proxyURL, targetAddress)
+	return d.connectProxy(ctx, conn, proxyURL, addr)
 }
 
-func (d *Dialer) connectProxy(ctx context.Context, pConn net.Conn, proxyURL *url.URL, targetAddress string) (net.Conn, error) {
-	baseConn := pConn
+func (d *Dialer) connectProxy(ctx context.Context, conn net.Conn, proxyURL *url.URL, addr string) (net.Conn, error) {
+	baseConn := conn
 	stopCancel := context.AfterFunc(ctx, func() { baseConn.Close() })
 	defer stopCancel()
 
 	owned := true
 	defer func() {
 		if owned {
-			pConn.Close()
+			conn.Close()
 		}
 	}()
 
 	if proxyURL.Scheme == "https" {
-		config := d.tlsConfig(proxyURL.Hostname())
-		tlsConn := tls.Client(pConn, config)
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
+		cfg := d.tlsConfig(proxyURL.Hostname())
+		tc := tls.Client(conn, cfg)
+		if err := tc.HandshakeContext(ctx); err != nil {
 			return nil, fmt.Errorf("plugupgrade: HTTP proxy TLS handshake: %w", err)
 		}
-		pConn = tlsConn
+		conn = tc
 	}
 
-	connectReq := &http.Request{
+	req := &http.Request{
 		Method: http.MethodConnect,
 		URL: &url.URL{
-			Opaque: targetAddress,
+			Opaque: addr,
 		},
-		Host:       targetAddress,
+		Host:       addr,
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
@@ -243,22 +235,22 @@ func (d *Dialer) connectProxy(ctx context.Context, pConn net.Conn, proxyURL *url
 	if proxyURL.User != nil {
 		password, _ := proxyURL.User.Password()
 		auth := proxyURL.User.Username() + ":" + password
-		connectReq.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth)))
+		req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth)))
 	}
 
-	if err := connectReq.Write(pConn); err != nil {
+	if err := req.Write(conn); err != nil {
 		return nil, fmt.Errorf("plugupgrade: write CONNECT to proxy %s: %w", proxyURL.Redacted(), err)
 	}
 
-	reader := bufio.NewReader(pConn)
-	connectResp, err := http.ReadResponse(reader, connectReq)
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
 		return nil, fmt.Errorf("plugupgrade: read CONNECT response from proxy %s: %w", proxyURL.Redacted(), err)
 	}
-	defer connectResp.Body.Close()
+	defer resp.Body.Close()
 
-	if connectResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("plugupgrade: HTTP proxy %s rejected CONNECT with status %s", proxyURL.Redacted(), connectResp.Status)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("plugupgrade: HTTP proxy %s rejected CONNECT with status %s", proxyURL.Redacted(), resp.Status)
 	}
 	if !stopCancel() || ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -267,11 +259,11 @@ func (d *Dialer) connectProxy(ctx context.Context, pConn net.Conn, proxyURL *url
 	owned = false
 	if reader.Buffered() > 0 {
 		return &bufferedConn{
-			Conn:   pConn,
+			Conn:   conn,
 			reader: reader,
 		}, nil
 	}
-	return pConn, nil
+	return conn, nil
 }
 
 func (d *Dialer) netDialer() *net.Dialer {
@@ -282,19 +274,20 @@ func (d *Dialer) netDialer() *net.Dialer {
 }
 
 func (d *Dialer) tlsConfig(serverName string) *tls.Config {
-	config := new(tls.Config)
+	cfg := new(tls.Config)
 	if d.TLSConfig != nil {
-		config = d.TLSConfig.Clone()
+		cfg = d.TLSConfig.Clone()
 	}
-	if config.ServerName == "" {
-		config.ServerName = serverName
+	if cfg.ServerName == "" {
+		cfg.ServerName = serverName
 	}
-	config.NextProtos = []string{"http/1.1"}
-	return config
+	cfg.NextProtos = []string{"http/1.1"}
+	return cfg
 }
 
-// ProxyFromEnvironment selects a proxy from HTTP_PROXY, HTTPS_PROXY, ALL_PROXY,
-// and NO_PROXY (or their lowercase forms). WebSocket URLs use HTTP proxy rules.
+// ProxyFromEnvironment selects a proxy using HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY.
+// Lowercase forms are also accepted.
+// WebSocket URLs use HTTP proxy rules.
 func ProxyFromEnvironment(reqURL *url.URL) (*url.URL, error) {
 	u := *reqURL
 	switch u.Scheme {
@@ -342,13 +335,23 @@ func upgradeTarget(endpoint string) (*url.URL, string, error) {
 	if target.Path == "" {
 		target.Path = "/"
 	}
-	port := target.Port()
+	return target, urlAddr(target), nil
+}
+
+func urlAddr(u *url.URL) string {
+	port := u.Port()
 	if port == "" {
-		if target.Scheme == "https" || target.Scheme == "wss" {
+		port = "80"
+		if u.Scheme == "https" || u.Scheme == "wss" {
 			port = "443"
-		} else {
-			port = "80"
 		}
 	}
-	return target, net.JoinHostPort(target.Hostname(), port), nil
+	return net.JoinHostPort(u.Hostname(), port)
 }
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(data []byte) (int, error) { return c.reader.Read(data) }

@@ -11,8 +11,7 @@ import (
 	"net"
 )
 
-// Inspect retrieves a peer's canonical schema without knowing its fingerprint.
-// It takes ownership of conn and closes it after the exchange.
+// Inspect reads the peer's schema and closes conn.
 func Inspect(ctx context.Context, conn net.Conn) (remote RemoteSchema, err error) {
 	if conn == nil {
 		return RemoteSchema{}, fmt.Errorf("plug: connection is nil")

@@ -316,6 +316,61 @@ func (v *Item) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func decodeGetHTTP(fields map[string]jsontext.Value, v *GetRequest) error {
+	if err := json.Unmarshal(fields["id"], &v.ID); err != nil {
+		return fmt.Errorf("decode field id: %w", err)
+	}
+	if len(fields["labels"]) == 0 || string(fields["labels"]) == "null" {
+		v.Labels = plug.Option[[]string]{}
+	} else {
+		var decoded0 []string
+		var items2 []jsontext.Value
+		if err := json.Unmarshal(fields["labels"], &items2); err != nil {
+			return fmt.Errorf("decode field labels: %w", err)
+		}
+		decoded0 = make([]string, len(items2))
+		for index2 := range items2 {
+			if err := json.Unmarshal(items2[index2], &decoded0[index2]); err != nil {
+				return fmt.Errorf("decode field labels: %w", err)
+			}
+		}
+		v.Labels = plug.Some(decoded0)
+	}
+	if len(fields["token"]) == 0 || string(fields["token"]) == "null" {
+		v.Token = plug.Option[[]byte]{}
+	} else {
+		var decoded2 []byte
+		if err := json.Unmarshal(fields["token"], &decoded2); err != nil {
+			return fmt.Errorf("decode field token: %w", err)
+		}
+		v.Token = plug.Some(decoded2)
+	}
+	return nil
+}
+
+func decodeListItemsHTTP(fields map[string]jsontext.Value, v *ListItemsRequest) error {
+	if len(fields["limit"]) == 0 || string(fields["limit"]) == "null" {
+		v.Limit = plug.Option[uint32]{}
+	} else {
+		var decoded0 uint32
+		if err := json.Unmarshal(fields["limit"], &decoded0); err != nil {
+			return fmt.Errorf("decode field limit: %w", err)
+		}
+		v.Limit = plug.Some(decoded0)
+	}
+	return nil
+}
+
+func decodeUpdateHTTP(fields map[string]jsontext.Value, v *UpdateRequest) error {
+	if err := json.Unmarshal(fields["id"], &v.ID); err != nil {
+		return fmt.Errorf("decode field id: %w", err)
+	}
+	if err := json.Unmarshal(fields["item"], &v.Item); err != nil {
+		return fmt.Errorf("decode field item: %w", err)
+	}
+	return nil
+}
+
 // Schema describes the generated Plug service.
 var Schema = plug.Schema{
 	Package:       "golden",
@@ -598,6 +653,7 @@ var codecItemID = plugimpl.Codec[ItemID]{
 }
 
 var errorsAPIError = plugimpl.ErrorCodec{
+	Match: matchAPIError,
 	Encode: func(enc *plugimpl.Encoder, err error) (uint32, bool) {
 		var v APIError
 		if !errors.As(err, &v) {
@@ -629,22 +685,6 @@ var errorsAPIError = plugimpl.ErrorCodec{
 			return 0, false
 		}
 	},
-	Identify: func(err error) (uint32, bool) {
-		var v APIError
-		if !errors.As(err, &v) {
-			return 0, false
-		}
-		switch v := v.(type) {
-		case *Invalid:
-			return constructorIDInvalid, true
-		case *NotFound:
-			return constructorIDNotFound, true
-		case *UnknownAPIError:
-			return v.ConstructorID, true
-		default:
-			return 0, false
-		}
-	},
 	Decode: func(dec *plugimpl.Decoder, id uint32) error {
 		switch id {
 		case constructorIDInvalid:
@@ -671,6 +711,28 @@ var errorsAPIError = plugimpl.ErrorCodec{
 			return &UnknownAPIError{ConstructorID: id, Payload: payload}
 		}
 	},
+}
+
+func matchAPIError(err error) (uint32, error, bool) {
+	var v APIError
+	if !errors.As(err, &v) {
+		return 0, nil, false
+	}
+	switch v := v.(type) {
+	case *Invalid:
+		if v != nil {
+			return constructorIDInvalid, v, true
+		}
+	case *NotFound:
+		if v != nil {
+			return constructorIDNotFound, v, true
+		}
+	case *UnknownAPIError:
+		if v != nil {
+			return v.ConstructorID, v, true
+		}
+	}
+	return 0, nil, false
 }
 
 var codecChoice = plugimpl.Codec[Choice]{
@@ -760,6 +822,7 @@ var codecItem = plugimpl.Codec[Item]{
 }
 
 var errorsOpenError = plugimpl.ErrorCodec{
+	Match: matchOpenError,
 	Encode: func(enc *plugimpl.Encoder, err error) (uint32, bool) {
 		var v *OpenError
 		if !errors.As(err, &v) {
@@ -770,16 +833,6 @@ var errorsOpenError = plugimpl.ErrorCodec{
 			return 0, true
 		}
 		plugimpl.StringCodec.Encode(enc, v.Reason)
-		return constructorIDFailed, true
-	},
-	Identify: func(err error) (uint32, bool) {
-		var v *OpenError
-		if !errors.As(err, &v) {
-			return 0, false
-		}
-		if v == nil {
-			return 0, false
-		}
 		return constructorIDFailed, true
 	},
 	Decode: func(dec *plugimpl.Decoder, id uint32) error {
@@ -797,6 +850,14 @@ var errorsOpenError = plugimpl.ErrorCodec{
 			return nil
 		}
 	},
+}
+
+func matchOpenError(err error) (uint32, error, bool) {
+	var v *OpenError
+	if errors.As(err, &v) && v != nil {
+		return constructorIDFailed, v, true
+	}
+	return 0, nil, false
 }
 
 var codecConnectRequest = plugimpl.Codec[ConnectRequest]{
@@ -1001,12 +1062,12 @@ func OpenConnect(ctx context.Context, conn net.Conn, req ConnectRequest, opts pl
 //	[golden.get] id: 1
 //	    [Item]
 func (c *Client) Get(ctx context.Context, req GetRequest) (plug.Option[Item], error) {
-	return plug.Call(ctx, c.raw, methodGet, req)
+	return c.raw.Call(ctx, methodGet, req)
 }
 
 // ListItems lists items up to the optional limit.
 func (c *Client) ListItems(ctx context.Context, req ListItemsRequest) ([]Item, error) {
-	return plug.Call(ctx, c.raw, methodListItems, req)
+	return c.raw.Call(ctx, methodListItems, req)
 }
 
 // OpenOpen opens a raw stream.
@@ -1016,13 +1077,13 @@ func OpenOpen(ctx context.Context, conn net.Conn, req OpenRequest, opts plug.Cli
 
 // Ping checks service health.
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := plug.Call(ctx, c.raw, methodPing, plugimpl.Void{})
+	_, err := c.raw.Call(ctx, methodPing, plugimpl.Void{})
 	return err
 }
 
 // Update updates an item.
 func (c *Client) Update(ctx context.Context, req UpdateRequest) error {
-	_, err := plug.Call(ctx, c.raw, methodUpdate, req)
+	_, err := c.raw.Call(ctx, methodUpdate, req)
 	return err
 }
 
@@ -1032,22 +1093,22 @@ func HTTPRoutes(server *plug.Server) []plughttp.Route {
 		plughttp.NewRoute(server, methodGet, plughttp.Binding{
 			Verb: "GET",
 			Path: "/items/{id}",
-		}),
+		}, decodeGetHTTP),
 		plughttp.NewRoute(server, methodGet, plughttp.Binding{
 			Verb: "POST",
 			Path: "/lookup",
-		}),
+		}, decodeGetHTTP),
 		plughttp.NewRoute(server, methodListItems, plughttp.Binding{
 			Verb: "GET",
 			Path: "/items",
-		}),
+		}, decodeListItemsHTTP),
 		plughttp.NewRoute(server, methodPing, plughttp.Binding{
 			Verb: "GET",
 			Path: "/healthz",
-		}),
+		}, nil),
 		plughttp.NewRoute(server, methodUpdate, plughttp.Binding{
 			Verb: "PUT",
 			Path: "/items/{id}",
-		}),
+		}, decodeUpdateHTTP),
 	}
 }

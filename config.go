@@ -13,31 +13,31 @@ import (
 )
 
 const (
-	// DefaultMaxFrameSize is the default maximum number of bytes after a frame's
-	// length prefix.
+	// DefaultMaxFrameSize is the default frame size limit.
 	DefaultMaxFrameSize uint32 = 16 << 20
 	// DefaultMaxListElements is the default list element limit.
 	DefaultMaxListElements uint32 = 1 << 20
-	// DefaultMaxDecodeBytes bounds allocations while decoding one payload.
+	// DefaultMaxDecodeBytes is the default decoding allocation limit.
 	DefaultMaxDecodeBytes uint64 = plugimpl.DefaultMaxDecodeBytes
-	// DefaultMaxConcurrentCalls is the default maximum number of active calls per connection.
+	// DefaultMaxConcurrentCalls is the default call limit per connection.
 	DefaultMaxConcurrentCalls uint32 = 100
 )
 
-// Limits bounds resource use per connection. Zero fields use defaults.
+// Limits bounds resource use for binary calls.
+// Zero fields use defaults.
 type Limits struct {
 	// MaxFrameSize bounds the bytes following a frame length prefix.
 	MaxFrameSize uint32
 
-	// MaxListElements bounds each encoded list and the total list elements
-	// decoded from one payload.
+	// MaxListElements limits each encoded list
+	// and the total list elements decoded from a payload.
 	MaxListElements uint32
 
-	// MaxDecodeBytes bounds requested allocation bytes while decoding one
-	// payload, including replaced slice storage. Frame buffers are separate.
+	// MaxDecodeBytes limits total requested allocation bytes per decoded payload.
+	// Frame buffers are excluded.
 	MaxDecodeBytes uint64
 
-	// MaxConcurrentCalls bounds active concurrent calls per server connection.
+	// MaxConcurrentCalls limits active calls per server connection.
 	MaxConcurrentCalls uint32
 }
 
@@ -57,7 +57,7 @@ const (
 	StageHandlerPanic
 )
 
-// String returns the stage name used in diagnostics.
+// String returns the stage name.
 func (s ErrorStage) String() string {
 	switch s {
 	case StageAuthenticate:
@@ -85,7 +85,7 @@ func (s ErrorStage) String() string {
 	}
 }
 
-// ErrorEvent describes a failure outside normal method execution.
+// ErrorEvent describes a runtime error.
 type ErrorEvent struct {
 	Stage     ErrorStage
 	Method    MethodInfo
@@ -94,11 +94,11 @@ type ErrorEvent struct {
 }
 
 // ErrorReporter receives runtime errors.
+// It may be called concurrently.
 type ErrorReporter func(context.Context, ErrorEvent)
 
 // ServerOptions configures a Plug server.
 type ServerOptions struct {
-	// Limits overrides the default resource limits.
 	Limits Limits
 
 	// Compression accepts zstd-compressed frames.
@@ -107,25 +107,18 @@ type ServerOptions struct {
 	// StrictSchema requires matching schema fingerprints.
 	StrictSchema bool
 
-	// Security configures authentication and authorization.
 	Security Security
 
-	// ObserveCall is called after every completed handler invocation. The
-	// observer must not modify any argument and must not block.
 	ObserveCall CallObserver
-
-	// ReportError receives diagnostic runtime error events.
 	ReportError ErrorReporter
 }
 
 // ClientOptions configures a Plug client.
 type ClientOptions struct {
-	// Limits overrides the default resource limits.
 	Limits Limits
 
-	// Compression requests zstd-compressed frames. [Dial] and [DialFunc] retry
-	// without compression when the peer does not support it. [NewClient] cannot
-	// retry an existing connection and returns an error instead.
+	// Compression requests zstd-compressed frames.
+	// See [DialFunc] for fallback behavior.
 	Compression bool
 
 	// StrictSchema requires matching schema fingerprints.
@@ -142,7 +135,7 @@ const (
 	CallInternalError
 )
 
-// String returns the outcome name used in diagnostics.
+// String returns the outcome name.
 func (o CallOutcome) String() string {
 	switch o {
 	case CallSucceeded:
@@ -160,33 +153,33 @@ func (o CallOutcome) String() string {
 
 // CallEvent describes a completed method call.
 type CallEvent struct {
-	// Method is the invoked method's schema metadata.
-	Method MethodInfo
-	// Principal is the authenticated caller when present.
+	Method    MethodInfo
 	Principal Principal
-	// HasPrincipal reports whether an authenticated principal was present.
+	// HasPrincipal reports whether the caller was authenticated.
 	HasPrincipal bool
-	// Duration measures the call through response encoding.
+
+	// Duration includes decoding, authorization, handling, and response encoding.
 	Duration time.Duration
-	// HandlerDuration is the wall-clock handler execution time when entered.
+	// HandlerDuration is the time spent in the handler, or zero if it was not called.
 	HandlerDuration time.Duration
-	// PayloadSize is the result frame payload size in bytes before compression.
+
+	// PayloadSize is the uncompressed response payload size in bytes.
+	// It is zero for local calls.
 	PayloadSize int
-	// Compressed reports whether the result frame payload was compressed.
+	// Compressed reports whether the response payload was compressed.
 	Compressed bool
-	// CompressedSize is the compressed result frame payload size in bytes. It
-	// is zero when Compressed is false.
+	// CompressedSize is the compressed size in bytes, or zero if uncompressed.
 	CompressedSize int
-	// CompressionSavings is the number of result payload bytes saved by
-	// compression. It is zero when Compressed is false.
+	// CompressionSavings counts bytes saved by compression.
 	CompressionSavings int
-	// Outcome is the classified call outcome.
+
 	Outcome CallOutcome
-	// Err is the diagnostic error, when present.
+	// Err is the diagnostic error, if any.
 	Err error
 }
 
-// CallObserver receives completed calls.
+// CallObserver receives completed calls, including decode and authorization failures.
+// Callbacks may run concurrently and must not block or modify their arguments.
 type CallObserver func(context.Context, CallEvent)
 
 func normalizeSchemaLimits(schema *Schema, limits Limits) (*Schema, Limits, error) {
