@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"testing"
@@ -209,8 +210,126 @@ func TestFrameCompression(t *testing.T) {
 	}
 }
 
+func TestReadEmptyFrameAllocs(t *testing.T) {
+	for name, value := range map[string]frame{
+		"request":           {kind: frameRequest, requestID: 128, code: 42},
+		"response":          {kind: frameResponse, requestID: 128},
+		"application error": {kind: frameApplicationError, requestID: 128, code: 42},
+		"protocol error":    {kind: frameProtocolError, requestID: 128, code: uint32(ErrorInternal)},
+		"cancel":            {kind: frameCancel, requestID: 128},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var encoded bytes.Buffer
+			limits := Limits{MaxFrameSize: 1024}
+			if err := newFramer(&encoded, nil, limits, false).writeFrame(value); err != nil {
+				t.Fatal(err)
+			}
+
+			var reader bytes.Reader
+			f := newFramer(nil, struct{ io.Reader }{&reader}, limits, false)
+			allocs := testing.AllocsPerRun(100, func() {
+				reader.Reset(encoded.Bytes())
+				if _, err := f.readFrame(); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("readFrame allocated %g times; want 0", allocs)
+			}
+		})
+	}
+}
+
+func TestFramePayloadOwnership(t *testing.T) {
+	noise := make([]byte, compressionThreshold)
+	if _, err := rand.New(rand.NewSource(1)).Read(noise); err != nil {
+		t.Fatal(err)
+	}
+	payloads := [][]byte{
+		bytes.Repeat([]byte("first "), 200),
+		noise,
+		bytes.Repeat([]byte("second "), 200),
+		[]byte("last"),
+		nil,
+	}
+	for name, compress := range map[string]bool{"plain": false, "compressed": true} {
+		t.Run(name, func(t *testing.T) {
+			var encoded bytes.Buffer
+			limits := Limits{MaxFrameSize: 4096}
+			writer := newFramer(&encoded, nil, limits, compress)
+			for i, payload := range payloads {
+				stats, err := writer.writeFrameWithStats(frame{
+					kind:      frameRequest,
+					requestID: uint64(i + 1),
+					code:      uint32(i),
+					payload:   payload,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantCompressed := compress && (i == 0 || i == 2)
+				if stats.compressed != wantCompressed {
+					t.Fatalf("frame %d compressed = %t; want %t", i, stats.compressed, wantCompressed)
+				}
+			}
+
+			reader := newFramer(nil, bytes.NewReader(encoded.Bytes()), limits, compress)
+			frames := make([]frame, len(payloads))
+			for i := range frames {
+				var err error
+				frames[i], err = reader.readFrame()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i, fr := range frames {
+				if fr.requestID != uint64(i+1) || fr.code != uint32(i) || !bytes.Equal(fr.payload, payloads[i]) {
+					t.Fatalf("frame %d changed after reading later frames", i)
+				}
+			}
+		})
+	}
+}
+
+func TestFrameBufferRetention(t *testing.T) {
+	noise := make([]byte, 2*maxRetainedBufferSize)
+	if _, err := rand.New(rand.NewSource(1)).Read(noise); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat(noise, 2)
+	var encoded bytes.Buffer
+	limits := Limits{MaxFrameSize: 1 << 20}
+	writer := newFramer(&encoded, nil, limits, true)
+	stats, err := writer.writeFrameWithStats(frame{
+		kind:      frameResponse,
+		requestID: 1,
+		payload:   payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stats.compressed || stats.compressedSize <= maxRetainedBufferSize {
+		t.Fatalf("payload stats = %+v; want compressed data larger than retained buffer limit", stats)
+	}
+	if cap(writer.wbuf) > maxRetainedBufferSize || cap(writer.cbuf) > maxRetainedBufferSize {
+		t.Fatal("writer retained a large buffer")
+	}
+
+	reader := newFramer(nil, bytes.NewReader(encoded.Bytes()), limits, true)
+	got, err := reader.readFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.payload, payload) {
+		t.Fatal("decoded payload differs from input")
+	}
+	if cap(reader.rbuf) > maxRetainedBufferSize {
+		t.Fatal("reader retained a large buffer")
+	}
+}
+
 func TestCompressedFrameSizeLimit(t *testing.T) {
-	payload, err := compressFramePayload(bytes.Repeat([]byte("a"), compressionThreshold))
+	payload, err := compressFramePayload(nil, bytes.Repeat([]byte("a"), compressionThreshold))
 	if err != nil {
 		t.Fatal(err)
 	}

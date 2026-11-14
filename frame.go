@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -44,20 +45,31 @@ type payloadStats struct {
 }
 
 // framer reads and writes frames for a connection.
+// Reads must be serialized. Writes are safe for concurrent use.
 type framer struct {
 	r        io.Reader
+	br       io.ByteReader
 	w        io.Writer
 	limits   Limits
 	compress bool
 
+	rcode [4]byte
+	rbuf  []byte
+
 	mu   sync.Mutex
 	werr error
 	wbuf []byte
+	cbuf []byte
 }
 
 func newFramer(w io.Writer, r io.Reader, limits Limits, compress bool) *framer {
+	br, ok := r.(io.ByteReader)
+	if !ok {
+		br = &streamByteReader{r: r}
+	}
 	return &framer{
 		r:        r,
+		br:       br,
 		w:        w,
 		limits:   limits,
 		compress: compress,
@@ -67,12 +79,12 @@ func newFramer(w io.Writer, r io.Reader, limits Limits, compress bool) *framer {
 
 type streamByteReader struct {
 	r io.Reader
+	b [1]byte
 }
 
 func (r *streamByteReader) ReadByte() (byte, error) {
-	var b [1]byte
-	_, err := io.ReadFull(r.r, b[:])
-	return b[0], err
+	_, err := io.ReadFull(r.r, r.b[:])
+	return r.b[0], err
 }
 
 func readStreamUvarint(r io.Reader) (uint64, error) {
@@ -107,7 +119,7 @@ func readFrameUvarint(r io.ByteReader, n *uint64) (uint64, error) {
 }
 
 func (f *framer) readFrame() (frame, error) {
-	n, err := readStreamUvarint(f.r)
+	n, err := binary.ReadUvarint(f.br)
 	if err != nil {
 		return frame{}, fmt.Errorf("plug: read frame size: %w", err)
 	}
@@ -118,14 +130,8 @@ func (f *framer) readFrame() (frame, error) {
 		return frame{}, fmt.Errorf("plug: frame size %d exceeds maximum %d", n, f.limits.MaxFrameSize)
 	}
 
-	br, ok := f.r.(io.ByteReader)
-	if !ok {
-		br = &streamByteReader{
-			r: f.r,
-		}
-	}
 	remaining := n
-	b, err := br.ReadByte()
+	b, err := f.br.ReadByte()
 	if err != nil {
 		return frame{}, err
 	}
@@ -140,7 +146,7 @@ func (f *framer) readFrame() (frame, error) {
 	default:
 		return frame{}, fmt.Errorf("plug: invalid frame kind %d", kind)
 	}
-	id, err := readFrameUvarint(br, &remaining)
+	id, err := readFrameUvarint(f.br, &remaining)
 	if err != nil {
 		return frame{}, fmt.Errorf("plug: read frame request ID: %w", err)
 	}
@@ -154,17 +160,16 @@ func (f *framer) readFrame() (frame, error) {
 		if remaining < 4 {
 			return frame{}, io.ErrUnexpectedEOF
 		}
-		var code [4]byte
-		if _, err := io.ReadFull(f.r, code[:]); err != nil {
+		if _, err := io.ReadFull(f.r, f.rcode[:]); err != nil {
 			return frame{}, err
 		}
-		v.code = binary.LittleEndian.Uint32(code[:])
+		v.code = binary.LittleEndian.Uint32(f.rcode[:])
 		remaining -= 4
 	case frameProtocolError:
 		if remaining < 1 {
 			return frame{}, io.ErrUnexpectedEOF
 		}
-		code, err := br.ReadByte()
+		code, err := f.br.ReadByte()
 		if err != nil {
 			return frame{}, err
 		}
@@ -172,7 +177,18 @@ func (f *framer) readFrame() (frame, error) {
 		remaining--
 	case frameResponse, frameCancel:
 	}
-	v.payload = make([]byte, int(remaining))
+	if compressed {
+		// Only the compressed input can be reused. Decoded bytes may outlive f.
+		f.rbuf = slices.Grow(f.rbuf[:0], int(remaining))[:int(remaining)]
+		v.payload = f.rbuf
+		defer func() {
+			if cap(f.rbuf) > maxRetainedBufferSize {
+				f.rbuf = nil
+			}
+		}()
+	} else {
+		v.payload = make([]byte, int(remaining))
+	}
 	if _, err := io.ReadFull(f.r, v.payload); err != nil {
 		return frame{}, err
 	}
@@ -278,15 +294,16 @@ func (f *framer) writeFrameLocked(v frame) (payloadStats, error) {
 	kind := byte(v.kind)
 	payload := v.payload
 	if f.compress {
-		compressed, err := compressFramePayload(payload)
+		var err error
+		f.cbuf, err = compressFramePayload(f.cbuf, payload)
 		if err != nil {
 			return stats, err
 		}
-		if compressed != nil {
+		if len(f.cbuf) > 0 && len(f.cbuf) < len(payload) {
 			kind |= compressedFrameFlag
-			payload = compressed
+			payload = f.cbuf
 			stats.compressed = true
-			stats.compressedSize = len(compressed)
+			stats.compressedSize = len(payload)
 		}
 	}
 	size := uint64(headerSize + len(payload))
@@ -295,6 +312,9 @@ func (f *framer) writeFrameLocked(v frame) (payloadStats, error) {
 	defer func() {
 		if cap(f.wbuf) > maxRetainedBufferSize {
 			f.wbuf = nil
+		}
+		if cap(f.cbuf) > maxRetainedBufferSize {
+			f.cbuf = nil
 		}
 	}()
 	f.wbuf = binary.AppendUvarint(f.wbuf, size)

@@ -577,8 +577,9 @@ func (s *Server) serveFrames(ctx context.Context, conn net.Conn, principal Princ
 			continue
 		}
 
-		call := &activeCall{
-			cancel: cancel,
+		call := activeCall{
+			sequence: requests,
+			cancel:   cancel,
 		}
 		if !calls.add(fr.requestID, call) {
 			s.finishConnectionCall(cancel)
@@ -590,32 +591,7 @@ func (s *Server) serveFrames(ctx context.Context, conn net.Conn, principal Princ
 			break
 		}
 
-		go func(ctx context.Context, id uint64, payload []byte, invoke func(context.Context, []byte) callResult) {
-			defer s.activeCalls.Done()
-			defer calls.done()
-			result := invokeSafely(func() callResult {
-				return invoke(ctx, payload)
-			})
-			defer result.release()
-
-			if !calls.finish(id, call) {
-				result.observe(s, payloadStats{
-					size: len(result.payload),
-				})
-				return
-			}
-			stats, err := f.writeResult(id, result.kind, result.code, result.payload)
-			result.observe(s, stats)
-			if err != nil {
-				s.safeReportError(ctx, ErrorEvent{
-					Stage: StageWriteFrame,
-					Err:   err,
-				})
-			}
-			if err != nil || result.fatal {
-				conn.Close()
-			}
-		}(requestCtx, fr.requestID, fr.payload, entry.invoke)
+		go s.serveCall(requestCtx, conn, f, calls, call, fr.requestID, fr.payload, entry.invoke)
 	}
 
 	calls.cancelAll()
@@ -627,6 +603,42 @@ func (s *Server) serveFrames(ctx context.Context, conn net.Conn, principal Princ
 		return nil
 	}
 	return errors.Join(serveErr, closeErr)
+}
+
+func (s *Server) serveCall(
+	ctx context.Context,
+	conn net.Conn,
+	f *framer,
+	calls *activeCalls,
+	call activeCall,
+	id uint64,
+	payload []byte,
+	invoke func(context.Context, []byte) callResult,
+) {
+	defer s.activeCalls.Done()
+	defer calls.done()
+	result := invokeSafely(func() callResult {
+		return invoke(ctx, payload)
+	})
+	defer result.release()
+
+	if !calls.finish(id, call) {
+		result.observe(s, payloadStats{
+			size: len(result.payload),
+		})
+		return
+	}
+	stats, err := f.writeResult(id, result.kind, result.code, result.payload)
+	result.observe(s, stats)
+	if err != nil {
+		s.safeReportError(ctx, ErrorEvent{
+			Stage: StageWriteFrame,
+			Err:   err,
+		})
+	}
+	if err != nil || result.fatal {
+		conn.Close()
+	}
 }
 
 func invokeSafely(invoke func() callResult) (result callResult) {
@@ -656,17 +668,19 @@ func rejectFrame(frames *framer, requestID uint64, message string) error {
 
 type activeCalls struct {
 	mu      sync.Mutex
-	pending map[uint64]*activeCall
+	pending map[uint64]activeCall
 	running uint32
 }
 
 type activeCall struct {
-	cancel context.CancelFunc
+	// sequence identifies a request independently of its wire ID.
+	sequence uint64
+	cancel   context.CancelFunc
 }
 
 func newActiveCalls() *activeCalls {
 	return &activeCalls{
-		pending: make(map[uint64]*activeCall),
+		pending: make(map[uint64]activeCall),
 	}
 }
 
@@ -676,7 +690,7 @@ func (a *activeCalls) count() uint32 {
 	return a.running
 }
 
-func (a *activeCalls) add(id uint64, call *activeCall) bool {
+func (a *activeCalls) add(id uint64, call activeCall) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if _, ok := a.pending[id]; ok {
@@ -690,17 +704,18 @@ func (a *activeCalls) add(id uint64, call *activeCall) bool {
 // cancel suppresses the response, but the call keeps its capacity until done.
 func (a *activeCalls) cancel(id uint64) {
 	a.mu.Lock()
-	call := a.pending[id]
+	call, ok := a.pending[id]
 	delete(a.pending, id)
 	a.mu.Unlock()
-	if call != nil {
+	if ok {
 		call.cancel()
 	}
 }
 
-func (a *activeCalls) finish(id uint64, call *activeCall) bool {
+func (a *activeCalls) finish(id uint64, call activeCall) bool {
 	a.mu.Lock()
-	current := a.pending[id] == call
+	pending, ok := a.pending[id]
+	current := ok && pending.sequence == call.sequence
 	if current {
 		delete(a.pending, id)
 	}

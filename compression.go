@@ -45,21 +45,17 @@ var zstdFrames = sync.OnceValues(func() (*frameCompression, error) {
 	}, nil
 })
 
-func compressFramePayload(payload []byte) ([]byte, error) {
+func compressFramePayload(dst, payload []byte) ([]byte, error) {
 	if len(payload) < compressionThreshold {
-		return nil, nil
+		return dst[:0], nil
 	}
 	compression, err := zstdFrames()
 	if err != nil {
 		return nil, fmt.Errorf("plug: initialize zstd: %w", err)
 	}
 	// A nonempty destination avoids zstd's input-sized allocation.
-	result := binary.AppendUvarint(nil, uint64(len(payload)))
-	result = compression.encoder.EncodeAll(payload, result)
-	if len(result) >= len(payload) {
-		return nil, nil
-	}
-	return result, nil
+	dst = binary.AppendUvarint(dst[:0], uint64(len(payload)))
+	return compression.encoder.EncodeAll(payload, dst), nil
 }
 
 func decompressFramePayload(payload []byte, maximum uint64) ([]byte, error) {

@@ -27,9 +27,19 @@ Native calls and local `plug.Invoke` calls use the same registered handlers.
 
 A canceled handler keeps its concurrency slot until it returns. Its result must
 be discarded even if another call has reused the request ID. The pending-call
-map tracks call identity separately from the number of running handlers.
+map uses a connection's request sequence to track call identity separately from
+the wire ID and the number of running handlers.
 
 Encoders come from a pool. Network calls must finish writing before releasing
 one; local calls copy results before release. Decoded bytes can refer to the
 frame payload, so returning a decoder to its pool must clear its payload
 reference without changing the bytes.
+
+Each framer reuses its header storage and compression buffers. After warm-up,
+empty frames can be read and frames can be written without allocating. Reused
+buffers larger than 64 KiB are discarded after use. Reading a nonempty payload
+still allocates storage that decoded byte slices can retain. Compressed reads
+reuse the compressed input buffer and allocate the decompressed payload.
+
+Full calls also allocate cancellation contexts and handler goroutine state.
+Decoded strings, lists, and handler results can add allocations of their own.
