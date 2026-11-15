@@ -6,49 +6,39 @@ package schema
 
 import (
 	"os"
-	"reflect"
 	"testing"
 
+	"go.astrophena.name/base/testutil"
 	"go.astrophena.name/plug/example/greeter"
 )
 
-func TestRuntimeSchemaMatchesGeneratedSchema(t *testing.T) {
-	source, err := os.ReadFile("../../example/greeter/schema.plug")
+func TestRuntimeSchema(t *testing.T) {
+	src, err := os.ReadFile("../../example/greeter/schema.plug")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := Parse("schema.plug", source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := RuntimeSchema(parsed)
-	if !reflect.DeepEqual(got, greeter.Schema) {
-		t.Fatalf("runtime schema differs from generated schema:\ngot:  %#v\nwant: %#v", got, greeter.Schema)
-	}
+
+	s := mustParse(t, string(src))
+	testutil.AssertEqual(t, RuntimeSchema(s), greeter.Schema)
 }
 
-func TestRuntimeSchemaOwnership(t *testing.T) {
-	const source = `
-package test
-category "Users"
-type ZID = i64
-item id: ZID labels: list<string> = Item
-test.z labels: list<string> -> Item public
-  http POST "/z"
-  http GET "/z"
-test.a -> Item public
+func TestRuntimeOwnership(t *testing.T) {
+	const src = `
+package x
+category "Items"
+type ID = i64
+item id: ID labels: list<string> = Item
+x.z labels: list<string> -> Item public http POST "/z" http GET "/z"
+x.a -> Item public
 `
-	parsed := mustParse(t, source)
-	want := mustParse(t, source)
-	metadata := RuntimeSchema(parsed)
-	if !reflect.DeepEqual(parsed, want) {
-		t.Fatal("RuntimeSchema changed parsed declarations")
-	}
+	var (
+		s    = mustParse(t, src)
+		want = RuntimeSchema(mustParse(t, src))
+		got  = RuntimeSchema(s)
+	)
+	got.Categories[0].Types[0] = "Changed"
+	got.Methods[1].HTTP[0].Path = "/changed"
+	got.Types[1].Constructors[0].Fields[1].Type.Element.Name = "bytes"
 
-	metadata.Categories[0].Types[0] = "Changed"
-	metadata.Methods[1].HTTP[0].Path = "/changed"
-	metadata.Types[1].Constructors[0].Fields[1].Type.Element.Name = "bytes"
-	if !reflect.DeepEqual(RuntimeSchema(parsed), RuntimeSchema(want)) {
-		t.Fatal("changing metadata changed the parsed schema")
-	}
+	testutil.AssertEqual(t, RuntimeSchema(s), want)
 }

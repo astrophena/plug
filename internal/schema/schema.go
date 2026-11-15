@@ -2,14 +2,15 @@
 // Use of this source code is governed by the ISC
 // license that can be found in the LICENSE.md file.
 
-// Package schema parses and validates Plug schemas, checks compatibility, and
-// reports lint diagnostics. [RuntimeSchema] returns metadata for generation and
-// inspection. The parsed declarations stay private to this package.
+// Package schema parses and validates Plug schemas.
 package schema
 
-import "go/token"
+import (
+	"fmt"
+	"go/token"
+)
 
-// Schema is a parsed and validated Plug schema. Use [Parse] to construct a schema.
+// Schema is a parsed and validated Plug schema.
 type Schema struct {
 	packageName   string
 	position      Position
@@ -94,32 +95,25 @@ type typeRef struct {
 
 // String returns the canonical spelling of a type reference.
 func (t typeRef) String() string {
-	var value string
+	var s string
 	if t.element != nil {
-		value = "list<" + t.element.String() + ">"
+		s = "list<" + t.element.String() + ">"
 	} else {
-		value = t.name
+		s = t.name
 	}
 	if t.optional {
-		value += "?"
+		s += "?"
 	}
-	return value
+	return s
 }
 
-var primitives = map[string]bool{
-	"bool":   true,
-	"bytes":  true,
-	"f64":    true,
-	"i32":    true,
-	"i64":    true,
-	"raw":    true,
-	"string": true,
-	"u32":    true,
-	"u64":    true,
-	"void":   true,
+func isPrimitive(name string) bool {
+	switch name {
+	case "bool", "bytes", "f64", "i32", "i64", "raw", "string", "u32", "u64", "void":
+		return true
+	}
+	return false
 }
-
-func isPrimitive(name string) bool { return primitives[name] }
 
 func isRaw(ref typeRef) bool {
 	return ref.name == "raw" && ref.element == nil && !ref.optional
@@ -127,4 +121,36 @@ func isRaw(ref typeRef) bool {
 
 func validIdentifier(name string) bool {
 	return token.IsIdentifier(name) && name != "_"
+}
+
+// Position identifies a source location.
+// Line and Column are one-based; Column counts bytes.
+type Position struct {
+	Filename string
+	Line     int
+	Column   int
+}
+
+// String returns filename:line:column, omitting an empty filename.
+func (p Position) String() string {
+	if p.Filename == "" {
+		return fmt.Sprintf("%d:%d", p.Line, p.Column)
+	}
+	return fmt.Sprintf("%s:%d:%d", p.Filename, p.Line, p.Column)
+}
+
+// Error is a diagnostic at a source position.
+type Error struct {
+	Position Position
+	Message  string
+}
+
+// Error returns the source position and diagnostic message.
+func (e *Error) Error() string { return e.Position.String() + ": " + e.Message }
+
+func diagnostic(pos Position, format string, values ...any) error {
+	return &Error{
+		Position: pos,
+		Message:  fmt.Sprintf(format, values...),
+	}
 }

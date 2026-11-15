@@ -1,0 +1,7 @@
+package x version 1
+
+type category = string
+
+category category: category = Item
+
+x.category category: category -> Item public

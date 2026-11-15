@@ -7,131 +7,165 @@ package schema
 import (
 	"strings"
 	"testing"
+
+	"go.astrophena.name/base/testutil"
 )
 
-func TestGeneratedDeclarations(t *testing.T) {
-	for _, name := range []string{"Schema", "Client", "Handlers", "NewClient", "RegisterHandlers"} {
-		t.Run(name, func(t *testing.T) {
-			_, err := Parse("collision.plug", []byte("package test\ntype "+name+" = string\n"))
-			if err == nil || !strings.Contains(err.Error(), "generated Go declaration") {
-				t.Fatalf("Parse() = %v; want generated Go declaration collision", err)
-			}
-		})
-	}
-	for name, source := range map[string]string{
-		"raw function": `package test; type OpenTunnel = string; test.tunnel -> raw public`,
-		"request":      `package test; type EchoRequest = string; test.echo value: string -> string public`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := Parse("collision.plug", []byte(source))
-			if err == nil || !strings.Contains(err.Error(), "generated Go declaration") {
-				t.Fatalf("Parse() = %v; want generated Go declaration collision", err)
-			}
-		})
-	}
-}
-
-func TestSeparateGoNames(t *testing.T) {
-	for name, source := range map[string]string{
-		"raw close":         `package test; test.close -> raw public`,
-		"type Close":        `package test; type Close = string; test.echo value: Close -> Close public`,
-		"method and type":   `package test; type Value = string; test.value -> Value public`,
-		"unused request":    `package test; type EchoRequest = string; test.echo -> EchoRequest public`,
-		"method and client": `package test; test.client -> void public`,
-		"raw and type":      `package test; type Close = string; test.close -> raw public`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Parse("close.plug", []byte(source)); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestHTTPPatterns(t *testing.T) {
+func TestValidation(t *testing.T) {
 	cases := map[string]struct {
-		bindings string
-		wantErr  bool
+		src  string
+		want string
 	}{
-		"partial wildcard": {
-			`http GET "/users/prefix{id}"`,
-			true,
+		"duplicate field": {
+			`item id: i64 id: string = Item`,
+			"duplicate field",
 		},
-		"equivalent": {
-			`http GET "/users/{id}" http GET "/users/{name}"`,
-			true,
+		"error response": {
+			`failed = Failure; x.get -> Failure throws Failure`,
+			"cannot be used as a response",
 		},
-		"overlap": {
-			`http GET "/users/{id}" http GET "/{name}/settings"`,
-			true,
+		"non-scalar newtype": {
+			`type ID = void`,
+			"must use a scalar primitive",
 		},
-		"specific route": {
-			`http GET "/users/{id}" http GET "/users/settings"`,
-			false,
+		"raw field": {
+			`item stream: raw = Item`,
+			"raw is only valid",
 		},
-		"different verbs": {
-			`http GET "/users/{id}" http POST "/users/{name}"`,
-			false,
+		"raw HTTP": {
+			`x.open -> raw http GET "/open"`,
+			"cannot have an HTTP binding",
 		},
-		"trailing wildcard": {
-			`http GET "/users/{id}/{name...}"`,
-			false,
+		"primitive name": {
+			`type string = i64`,
+			"reserved for a primitive",
 		},
-		"middle wildcard": {
-			`http GET "/users/{id...}/settings"`,
-			true,
+		"error field": {
+			`failed error: string = Failure; x.get -> void throws Failure`,
+			"generated Error method",
 		},
-		"duplicate wildcard": {
-			`http GET "/users/{id}/{id...}"`,
-			true,
+		"optional list element": {
+			`item labels: list<string?> = Item`,
+			"list elements cannot be optional",
+		},
+		"recursive type": {
+			`item children: list<Item> = Item`,
+			"recursive type cycle",
+		},
+		"unknown type": {
+			`item id: Missing = Item`,
+			"unknown type",
+		},
+		"generated name": {
+			`type Schema = string`,
+			"generated Go declaration",
+		},
+		"client Close": {
+			`x.close -> void`,
+			"generated Client.Close",
+		},
+		"raw function": {
+			`type OpenTunnel = string; x.tunnel -> raw`,
+			"generated Go declaration",
+		},
+		"request type": {
+			`type EchoRequest = string; x.echo value: string -> string`,
+			"generated Go declaration",
+		},
+		"qualified method": {
+			`x.admin.get -> void`,
+			"form group.name",
+		},
+		"Go method name": {
+			`x.get -> void; y.get -> void`,
+			"generated Go declaration",
+		},
+		"required after optional": {
+			`item note: string? id: i64 = Item`,
+			"follows an optional extension field",
+		},
+		"undeclared permission": {
+			`x.get -> void requires item.read`,
+			"undeclared permission",
+		},
+		"non-scalar path": {
+			`item id: i64 = Item; x.get item: Item -> void http GET "/items/{item}"`,
+			"must be a scalar field",
+		},
+		"HTTP verb": {
+			`x.get -> void http CONNECT "/items"`,
+			"unsupported HTTP verb",
+		},
+		"status on response": {
+			`item id: i64 = Item httpStatus 400; x.get -> Item`,
+			"only valid on declared error constructors",
+		},
+		"empty category": {
+			`category ""; x.ping -> void`,
+			"category name is empty",
+		},
+		"padded category": {
+			`category " Items "; x.get -> void`,
+			"leading or trailing whitespace",
+		},
+		"unused category": {
+			`category "Items"`,
+			"contains no types or methods",
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			source := "package test; test.get id: string name: string -> void public " + tc.bindings
-			_, err := Parse("routes.plug", []byte(source))
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("Parse() = %v; want error %v", err, tc.wantErr)
+			_, err := Parse("schema.plug", []byte("package x\n"+tc.src))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse() = %v; want %q", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestHTTPWildcardTypes(t *testing.T) {
-	for name, tc := range map[string]struct {
-		declarations string
-		field        string
-		wantErr      bool
-	}{
-		"string": {
-			field: "string",
-		},
-		"optional string": {
-			field: "string?",
-		},
-		"newtype": {
-			declarations: "type Path = string",
-			field:        "Path?",
-		},
-		"integer": {
-			field:   "u32",
-			wantErr: true,
-		},
-		"bytes": {
-			field:   "bytes",
-			wantErr: true,
-		},
-		"list": {
-			field:   "list<string>",
-			wantErr: true,
-		},
-	} {
+func TestGoNames(t *testing.T) {
+	cases := map[string]string{
+		"raw Close":      `type Close = string; x.close -> raw`,
+		"type":           `type Value = string; x.value -> Value`,
+		"unused request": `type EchoRequest = string; x.echo -> EchoRequest`,
+	}
+	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
-			source := "package test\n" + tc.declarations + "\ntest.browse path: " + tc.field + " -> void public http GET \"/contents/{path...}\""
-			_, err := Parse("wildcard.plug", []byte(source))
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("Parse() = %v; want error %v", err, tc.wantErr)
-			}
+			mustParse(t, "package x\n"+src)
+		})
+	}
+}
+
+func TestHTTPBindings(t *testing.T) {
+	cases := map[string]struct {
+		src string
+		ok  bool
+	}{
+		"partial wildcard": {
+			`x.get id: string -> void http GET "/items/prefix{id}"`,
+			false,
+		},
+		"conflict": {
+			`x.get id: string name: string -> void http GET "/items/{id}" http GET "/items/{name}"`,
+			false,
+		},
+		"specific path and different verbs": {
+			`x.get id: string -> void http GET "/items/{id}" http GET "/items/latest" http POST "/items/{id}"`,
+			true,
+		},
+		"wildcard newtype": {
+			`type Path = string; x.get path: Path? -> void http GET "/items/{path...}"`,
+			true,
+		},
+		"wildcard integer": {
+			`x.get path: u32 -> void http GET "/items/{path...}"`,
+			false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse("schema.plug", []byte("package x\n"+tc.src))
+			testutil.AssertEqual(t, err == nil, tc.ok)
 		})
 	}
 }

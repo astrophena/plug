@@ -10,95 +10,98 @@ import (
 )
 
 // Lint reports unused declarations and missing documentation in a validated schema.
-func Lint(schema *Schema) []error {
-	if schema == nil {
+func Lint(s *Schema) []error {
+	if s == nil {
 		return nil
 	}
 
-	var issues []error
-
-	usedPermissions := make(map[string]bool)
-	for _, method := range schema.methods {
-		if method.permission != "" {
-			usedPermissions[method.permission] = true
+	var (
+		issues []error
+		perms  = make(map[string]bool)
+	)
+	for _, m := range s.methods {
+		if m.permission != "" {
+			perms[m.permission] = true
 		}
 	}
-	for _, permission := range schema.permissions {
-		if !usedPermissions[permission.name] {
-			issues = append(issues, diagnostic(permission.position, "permission %q is declared but never required by any method", permission.name))
+	for _, p := range s.permissions {
+		if !perms[p.name] {
+			issues = append(issues, diagnostic(p.position, "permission %q is declared but never required by any method", p.name))
 		}
 	}
 
-	knownConstructors := groupConstructors(schema)
-	reachableTypes := make(map[string]bool)
-	var visitTypeRef func(ref typeRef)
-	visitTypeRef = func(ref typeRef) {
+	var (
+		groups = groupConstructors(s)
+		used   = make(map[string]bool)
+		visit  func(typeRef)
+	)
+	visit = func(ref typeRef) {
 		if ref.element != nil {
-			visitTypeRef(*ref.element)
+			visit(*ref.element)
 			return
 		}
-		if isPrimitive(ref.name) || reachableTypes[ref.name] {
+		if isPrimitive(ref.name) || used[ref.name] {
 			return
 		}
-		reachableTypes[ref.name] = true
+		used[ref.name] = true
 
-		for _, constructor := range knownConstructors[ref.name] {
-			for _, field := range constructor.fields {
-				visitTypeRef(field.typ)
+		for _, c := range groups[ref.name] {
+			for _, f := range c.fields {
+				visit(f.typ)
 			}
 		}
 	}
 
-	for _, method := range schema.methods {
-		for _, field := range method.fields {
-			visitTypeRef(field.typ)
+	for _, m := range s.methods {
+		for _, f := range m.fields {
+			visit(f.typ)
 		}
-		visitTypeRef(method.response)
-		if method.errorType != nil {
-			visitTypeRef(*method.errorType)
+		visit(m.response)
+		if m.errorType != nil {
+			visit(*m.errorType)
 		}
 	}
 
-	for _, newtype := range schema.newtypes {
-		if !reachableTypes[newtype.name] {
+	for _, newtype := range s.newtypes {
+		if !used[newtype.name] {
 			issues = append(issues, diagnostic(newtype.position, "newtype %q is declared but never referenced", newtype.name))
 		}
 	}
 
-	visitedConstructorResults := make(map[string]bool)
-	for _, constructor := range schema.constructors {
-		if visitedConstructorResults[constructor.result] {
+	seen := make(map[string]bool)
+	for _, c := range s.constructors {
+		if seen[c.result] {
 			continue
 		}
-		visitedConstructorResults[constructor.result] = true
-		if !reachableTypes[constructor.result] {
-			issues = append(issues, diagnostic(constructor.position, "type %q is declared but never referenced by any method", constructor.result))
+		seen[c.result] = true
+		if !used[c.result] {
+			issues = append(issues, diagnostic(c.position, "type %q is declared but never referenced by any method", c.result))
 		}
 	}
 
-	lintDocumentation(&issues, schema.position, "package", schema.packageName, schema.documentation)
-	for _, category := range schema.categories {
-		lintDocumentation(&issues, category.position, "category", category.name, category.documentation)
+	lintDoc(&issues, s.position, "package", s.packageName, s.documentation)
+	for _, c := range s.categories {
+		lintDoc(&issues, c.position, "category", c.name, c.documentation)
 	}
-	for _, method := range schema.methods {
-		lintDocumentation(&issues, method.position, "method", method.name, method.documentation)
-		for _, field := range method.fields {
-			lintDocumentation(&issues, field.position, "field", method.name+"."+field.name, field.documentation)
+	for _, m := range s.methods {
+		lintDoc(&issues, m.position, "method", m.name, m.documentation)
+		for _, f := range m.fields {
+			lintDoc(&issues, f.position, "field", m.name+"."+f.name, f.documentation)
 		}
 	}
-	for _, permission := range schema.permissions {
-		lintDocumentation(&issues, permission.position, "permission", permission.name, permission.documentation)
+	for _, p := range s.permissions {
+		lintDoc(&issues, p.position, "permission", p.name, p.documentation)
 	}
-	for _, newtype := range schema.newtypes {
-		lintDocumentation(&issues, newtype.position, "newtype", newtype.name, newtype.documentation)
+	for _, newtype := range s.newtypes {
+		lintDoc(&issues, newtype.position, "newtype", newtype.name, newtype.documentation)
 	}
-	for _, dt := range schema.types {
-		lintDocumentation(&issues, dt.position, "type annotation", dt.name, dt.documentation)
+	for _, dt := range s.types {
+		lintDoc(&issues, dt.position, "type annotation", dt.name, dt.documentation)
 	}
-	for _, constructor := range schema.constructors {
-		lintDocumentation(&issues, constructor.position, "constructor", constructor.name, constructor.documentation)
-		for _, field := range constructor.fields {
-			lintDocumentation(&issues, field.position, "field", constructor.name+"."+field.name, field.documentation)
+	for _, c := range s.constructors {
+		lintDoc(&issues, c.position, "constructor", c.name, c.documentation)
+		for _, f := range c.fields {
+			lintDoc(&issues, f.position, "field", c.name+"."+f.name, f.documentation)
 		}
 	}
 
@@ -108,8 +111,8 @@ func Lint(schema *Schema) []error {
 	return issues
 }
 
-func lintDocumentation(issues *[]error, position Position, kind, name, doc string) {
+func lintDoc(issues *[]error, pos Position, kind, name, doc string) {
 	if strings.TrimSpace(doc) == "" {
-		*issues = append(*issues, diagnostic(position, "%s %q is missing a documentation comment", kind, name))
+		*issues = append(*issues, diagnostic(pos, "%s %q is missing a documentation comment", kind, name))
 	}
 }

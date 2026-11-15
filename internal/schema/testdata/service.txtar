@@ -1,0 +1,31 @@
+-- schema.plug --
+package x version 3
+
+permission item.read
+
+category "Data"
+
+// Item identifier.
+type ID = i64
+
+// Access methods.
+type Auth
+password hash: bytes = Auth
+passkey key: bytes = Auth
+
+item id: ID auth: Auth note: string? = Item
+
+// Lookup failures.
+type Failure
+missing id: ID = Failure httpStatus 404
+
+category "Items"
+
+x.open port: u32 -> raw throws Failure public
+x.get id: ID -> Item throws Failure requires item.read
+  http POST "/get"
+  http GET "/items/{id}"
+
+category "Service"
+
+x.ping -> void public

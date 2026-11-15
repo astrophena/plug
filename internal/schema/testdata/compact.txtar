@@ -1,0 +1,5 @@
+-- schema.plug --
+package x;
+type category=string;
+category category:category=Item;
+x.category category:category -> Item;

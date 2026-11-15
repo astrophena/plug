@@ -12,43 +12,48 @@ import (
 	"go.astrophena.name/plug/internal/doc"
 )
 
-// Parse parses and validates a Plug schema file.
-func Parse(filename string, source []byte) (*Schema, error) {
+// Parse parses and validates src as a Plug schema.
+func Parse(filename string, src []byte) (*Schema, error) {
 	p := &parser{
-		lexer: newLexer(filename, string(source)),
+		lexer: lexer{
+			filename: filename,
+			source:   string(src),
+			line:     1,
+			column:   1,
+		},
 	}
-	parsed, err := p.parse()
+	s, err := p.parse()
 	if err != nil {
 		return nil, err
 	}
-	if err := validate(parsed); err != nil {
+	if err := validate(s); err != nil {
 		return nil, err
 	}
-	if err := assignIDs(parsed); err != nil {
+	if err := assignIDs(s); err != nil {
 		return nil, err
 	}
-	return parsed, nil
+	return s, nil
 }
 
 type parser struct {
-	lexer *lexer
+	lexer lexer
 	peek  *tokenValue
 }
 
 func (p *parser) parse() (*Schema, error) {
-	documentation, err := p.documentation()
+	docs, err := p.docs()
 	if err != nil {
 		return nil, err
 	}
-	keyword, err := p.expect(tokenIdentifier, "package")
+	kw, err := p.expect(tokenIdentifier, "package")
 	if err != nil {
 		return nil, err
 	}
-	if keyword.text != "package" {
-		return nil, p.unexpected(keyword, "package declaration")
+	if kw.text != "package" {
+		return nil, p.unexpected(kw, "package declaration")
 	}
 
-	packageName, err := p.expect(tokenIdentifier, "package name")
+	pkg, err := p.expect(tokenIdentifier, "package name")
 	if err != nil {
 		return nil, err
 	}
@@ -63,26 +68,26 @@ func (p *parser) parse() (*Schema, error) {
 		if err != nil {
 			return nil, err
 		}
-		parsed, err := strconv.ParseUint(value.text, 10, 16)
-		if err != nil || parsed == 0 {
+		version, err := strconv.ParseUint(value.text, 10, 16)
+		if err != nil || version == 0 {
 			return nil, diagnostic(value.position, "invalid schema major version %q", value.text)
 		}
-		major = uint16(parsed)
+		major = uint16(version)
 	}
 	if err := p.optionalSemicolon(); err != nil {
 		return nil, err
 	}
 
-	result := &Schema{
-		packageName:   packageName.text,
-		position:      packageName.position,
+	s := &Schema{
+		packageName:   pkg.text,
+		position:      pkg.position,
 		major:         major,
-		documentation: documentation,
+		documentation: docs,
 	}
-	currentCategory := -1
+	cat := -1
 
 	for {
-		doc, err := p.documentation()
+		doc, err := p.docs()
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +99,7 @@ func (p *parser) parse() (*Schema, error) {
 			if doc != "" {
 				return nil, diagnostic(next.position, "documentation is not followed by a declaration")
 			}
-			return result, nil
+			return s, nil
 		}
 
 		name, err := p.expect(tokenIdentifier, "declaration")
@@ -108,11 +113,11 @@ func (p *parser) parse() (*Schema, error) {
 			}
 			switch v := value.(type) {
 			case newtype:
-				result.newtypes = append(result.newtypes, v)
-				appendCategoryType(result, currentCategory, v.name)
+				s.newtypes = append(s.newtypes, v)
+				appendCategoryType(s, cat, v.name)
 			case declaredType:
-				result.types = append(result.types, v)
-				appendCategoryType(result, currentCategory, v.name)
+				s.types = append(s.types, v)
+				appendCategoryType(s, cat, v.name)
 			}
 			continue
 		}
@@ -121,7 +126,7 @@ func (p *parser) parse() (*Schema, error) {
 			if err != nil {
 				return nil, err
 			}
-			result.permissions = append(result.permissions, value)
+			s.permissions = append(s.permissions, value)
 			continue
 		}
 		if name.text == "category" {
@@ -134,8 +139,8 @@ func (p *parser) parse() (*Schema, error) {
 				if err != nil {
 					return nil, err
 				}
-				result.categories = append(result.categories, value)
-				currentCategory = len(result.categories) - 1
+				s.categories = append(s.categories, value)
+				cat = len(s.categories) - 1
 				continue
 			}
 		}
@@ -150,17 +155,17 @@ func (p *parser) parse() (*Schema, error) {
 			if err != nil {
 				return nil, err
 			}
-			result.constructors = append(result.constructors, value)
-			appendCategoryType(result, currentCategory, value.result)
+			s.constructors = append(s.constructors, value)
+			appendCategoryType(s, cat, value.result)
 		case tokenArrow:
 			value, err := p.parseMethod(name, doc, fields)
 			if err != nil {
 				return nil, err
 			}
-			result.methods = append(result.methods, value)
-			if currentCategory >= 0 {
-				category := &result.categories[currentCategory]
-				category.methods = append(category.methods, name.text)
+			s.methods = append(s.methods, value)
+			if cat >= 0 {
+				c := &s.categories[cat]
+				c.methods = append(c.methods, name.text)
 			}
 		default:
 			return nil, p.unexpected(delimiter, "'=' or '->'")
@@ -169,11 +174,11 @@ func (p *parser) parse() (*Schema, error) {
 }
 
 func (p *parser) parseConstructor(name tokenValue, doc string, fields []field) (constructor, error) {
-	resultType, err := p.expect(tokenIdentifier, "constructor result type")
+	result, err := p.expect(tokenIdentifier, "constructor result type")
 	if err != nil {
 		return constructor{}, err
 	}
-	httpStatus := 0
+	status := 0
 	next, err := p.look()
 	if err != nil {
 		return constructor{}, err
@@ -184,7 +189,7 @@ func (p *parser) parseConstructor(name tokenValue, doc string, fields []field) (
 		if err != nil {
 			return constructor{}, err
 		}
-		httpStatus, err = strconv.Atoi(value.text)
+		status, err = strconv.Atoi(value.text)
 		if err != nil {
 			return constructor{}, diagnostic(value.position, "invalid HTTP status %q", value.text)
 		}
@@ -196,22 +201,22 @@ func (p *parser) parseConstructor(name tokenValue, doc string, fields []field) (
 		name:          name.text,
 		documentation: doc,
 		fields:        fields,
-		result:        resultType.text,
+		result:        result.text,
 		position:      name.position,
-		httpStatus:    httpStatus,
+		httpStatus:    status,
 	}, nil
 }
 
 func (p *parser) parseMethod(name tokenValue, doc string, fields []field) (method, error) {
-	response, err := p.parseTypeRef()
+	resp, err := p.parseTypeRef()
 	if err != nil {
 		return method{}, err
 	}
-	result := method{
+	m := method{
 		name:          name.text,
 		documentation: doc,
 		fields:        fields,
-		response:      response,
+		response:      resp,
 		position:      name.position,
 		public:        true,
 	}
@@ -226,7 +231,7 @@ func (p *parser) parseMethod(name tokenValue, doc string, fields []field) (metho
 		if err != nil {
 			return method{}, err
 		}
-		result.errorType = &value
+		m.errorType = &value
 	}
 
 	var accessSet bool
@@ -246,13 +251,13 @@ annotations:
 			}
 			p.take()
 			accessSet = true
-			result.public = next.text == "public"
-			if !result.public {
+			m.public = next.text == "public"
+			if !m.public {
 				value, err := p.expect(tokenIdentifier, "permission name")
 				if err != nil {
 					return method{}, err
 				}
-				result.permission = value.text
+				m.permission = value.text
 			}
 		case "http":
 			p.take()
@@ -264,7 +269,7 @@ annotations:
 			if err != nil {
 				return method{}, err
 			}
-			result.http = append(result.http, httpBinding{
+			m.http = append(m.http, httpBinding{
 				verb:     verb.text,
 				path:     path.text,
 				position: next.position,
@@ -276,10 +281,10 @@ annotations:
 	if err := p.optionalSemicolon(); err != nil {
 		return method{}, err
 	}
-	return result, nil
+	return m, nil
 }
 
-func (p *parser) parseCategory(documentation string) (category, error) {
+func (p *parser) parseCategory(docs string) (category, error) {
 	name, err := p.expect(tokenString, "quoted category name")
 	if err != nil {
 		return category{}, err
@@ -289,22 +294,22 @@ func (p *parser) parseCategory(documentation string) (category, error) {
 	}
 	return category{
 		name:          name.text,
-		documentation: documentation,
+		documentation: docs,
 		position:      name.position,
 	}, nil
 }
 
-func appendCategoryType(schema *Schema, categoryIndex int, name string) {
-	if categoryIndex < 0 {
+func appendCategoryType(s *Schema, index int, name string) {
+	if index < 0 {
 		return
 	}
-	category := &schema.categories[categoryIndex]
-	if !slices.Contains(category.types, name) {
-		category.types = append(category.types, name)
+	c := &s.categories[index]
+	if !slices.Contains(c.types, name) {
+		c.types = append(c.types, name)
 	}
 }
 
-func (p *parser) parsePermission(documentation string) (permission, error) {
+func (p *parser) parsePermission(docs string) (permission, error) {
 	name, err := p.expect(tokenIdentifier, "permission name")
 	if err != nil {
 		return permission{}, err
@@ -314,12 +319,12 @@ func (p *parser) parsePermission(documentation string) (permission, error) {
 	}
 	return permission{
 		name:          name.text,
-		documentation: documentation,
+		documentation: docs,
 		position:      name.position,
 	}, nil
 }
 
-func (p *parser) parseType(documentation string) (any, error) {
+func (p *parser) parseType(docs string) (any, error) {
 	name, err := p.expect(tokenIdentifier, "type name")
 	if err != nil {
 		return nil, err
@@ -339,7 +344,7 @@ func (p *parser) parseType(documentation string) (any, error) {
 		}
 		return newtype{
 			name:          name.text,
-			documentation: documentation,
+			documentation: docs,
 			base:          base.text,
 			position:      name.position,
 		}, nil
@@ -350,7 +355,7 @@ func (p *parser) parseType(documentation string) (any, error) {
 	}
 	return declaredType{
 		name:          name.text,
-		documentation: documentation,
+		documentation: docs,
 		position:      name.position,
 	}, nil
 }
@@ -358,7 +363,7 @@ func (p *parser) parseType(documentation string) (any, error) {
 func (p *parser) parseFields() ([]field, tokenValue, error) {
 	var fields []field
 	for {
-		documentation, err := p.documentation()
+		docs, err := p.docs()
 		if err != nil {
 			return nil, tokenValue{}, err
 		}
@@ -367,7 +372,7 @@ func (p *parser) parseFields() ([]field, tokenValue, error) {
 			return nil, tokenValue{}, err
 		}
 		if next.kind == tokenEqual || next.kind == tokenArrow {
-			if documentation != "" {
+			if docs != "" {
 				return nil, tokenValue{}, diagnostic(next.position, "documentation is not followed by a field")
 			}
 			p.take()
@@ -386,7 +391,7 @@ func (p *parser) parseFields() ([]field, tokenValue, error) {
 		}
 		fields = append(fields, field{
 			name:          name.text,
-			documentation: documentation,
+			documentation: docs,
 			typ:           typ,
 			position:      name.position,
 		})
@@ -398,22 +403,22 @@ func (p *parser) parseTypeRef() (typeRef, error) {
 	if err != nil {
 		return typeRef{}, err
 	}
-	result := typeRef{
+	ref := typeRef{
 		name: name.text,
 	}
 	if name.text == "list" {
 		if _, err := p.expect(tokenLess, "'<'"); err != nil {
 			return typeRef{}, err
 		}
-		element, err := p.parseTypeRef()
+		elem, err := p.parseTypeRef()
 		if err != nil {
 			return typeRef{}, err
 		}
 		if _, err := p.expect(tokenGreater, "'>'"); err != nil {
 			return typeRef{}, err
 		}
-		result.name = ""
-		result.element = &element
+		ref.name = ""
+		ref.element = &elem
 	}
 	next, err := p.look()
 	if err != nil {
@@ -421,12 +426,12 @@ func (p *parser) parseTypeRef() (typeRef, error) {
 	}
 	if next.kind == tokenQuestion {
 		p.take()
-		result.optional = true
+		ref.optional = true
 	}
-	return result, nil
+	return ref, nil
 }
 
-func (p *parser) documentation() (string, error) {
+func (p *parser) docs() (string, error) {
 	var lines []string
 	for {
 		next, err := p.look()
@@ -492,3 +497,183 @@ func (p *parser) take() (tokenValue, error) {
 	p.peek = nil
 	return value, nil
 }
+
+type tokenKind uint8
+
+const (
+	tokenEOF tokenKind = iota
+	tokenIdentifier
+	tokenNumber
+	tokenString
+	tokenDoc
+	tokenColon
+	tokenSemicolon
+	tokenEqual
+	tokenQuestion
+	tokenLess
+	tokenGreater
+	tokenArrow
+)
+
+type tokenValue struct {
+	kind     tokenKind
+	text     string
+	position Position
+}
+
+type lexer struct {
+	filename string
+	source   string
+	offset   int
+	line     int
+	column   int
+}
+
+func (l *lexer) next() (tokenValue, error) {
+	for l.offset < len(l.source) && isSpace(l.source[l.offset]) {
+		l.advance(l.source[l.offset])
+	}
+
+	pos := l.position()
+	if l.offset == len(l.source) {
+		return tokenValue{
+			kind:     tokenEOF,
+			position: pos,
+		}, nil
+	}
+
+	if strings.HasPrefix(l.source[l.offset:], "//") {
+		l.advance('/')
+		l.advance('/')
+		start := l.offset
+		for l.offset < len(l.source) && l.source[l.offset] != '\n' {
+			l.advance(l.source[l.offset])
+		}
+		return tokenValue{
+			kind:     tokenDoc,
+			text:     strings.TrimPrefix(strings.TrimRight(l.source[start:l.offset], " \t\r"), " "),
+			position: pos,
+		}, nil
+	}
+
+	if strings.HasPrefix(l.source[l.offset:], "->") {
+		l.advance('-')
+		l.advance('>')
+		return tokenValue{
+			kind:     tokenArrow,
+			text:     "->",
+			position: pos,
+		}, nil
+	}
+
+	if isIdentifierStart(l.source[l.offset]) {
+		start := l.offset
+		for l.offset < len(l.source) && isIdentifierContinue(l.source[l.offset]) {
+			l.advance(l.source[l.offset])
+		}
+		return tokenValue{
+			kind:     tokenIdentifier,
+			text:     l.source[start:l.offset],
+			position: pos,
+		}, nil
+	}
+
+	if isDigit(l.source[l.offset]) {
+		start := l.offset
+		for l.offset < len(l.source) && isDigit(l.source[l.offset]) {
+			l.advance(l.source[l.offset])
+		}
+		return tokenValue{
+			kind:     tokenNumber,
+			text:     l.source[start:l.offset],
+			position: pos,
+		}, nil
+	}
+
+	if l.source[l.offset] == '"' {
+		start := l.offset
+		l.advance('"')
+		for l.offset < len(l.source) && l.source[l.offset] != '"' {
+			if l.source[l.offset] == '\n' {
+				return tokenValue{}, diagnostic(pos, "unterminated string")
+			}
+			if l.source[l.offset] == '\\' {
+				l.advance('\\')
+				if l.offset == len(l.source) {
+					break
+				}
+			}
+			l.advance(l.source[l.offset])
+		}
+		if l.offset == len(l.source) {
+			return tokenValue{}, diagnostic(pos, "unterminated string")
+		}
+		l.advance('"')
+		v, err := strconv.Unquote(l.source[start:l.offset])
+		if err != nil {
+			return tokenValue{}, diagnostic(pos, "invalid string: %v", err)
+		}
+		return tokenValue{
+			kind:     tokenString,
+			text:     v,
+			position: pos,
+		}, nil
+	}
+
+	v := l.source[l.offset]
+	l.advance(v)
+	var kind tokenKind
+	switch v {
+	case ':':
+		kind = tokenColon
+	case ';':
+		kind = tokenSemicolon
+	case '=':
+		kind = tokenEqual
+	case '?':
+		kind = tokenQuestion
+	case '<':
+		kind = tokenLess
+	case '>':
+		kind = tokenGreater
+	default:
+		return tokenValue{}, diagnostic(pos, "unexpected character %q", v)
+	}
+	return tokenValue{
+		kind:     kind,
+		text:     string(v),
+		position: pos,
+	}, nil
+}
+
+func (l *lexer) position() Position {
+	return Position{
+		Filename: l.filename,
+		Line:     l.line,
+		Column:   l.column,
+	}
+}
+
+func (l *lexer) advance(b byte) {
+	l.offset++
+	if b == '\n' {
+		l.line++
+		l.column = 1
+		return
+	}
+	l.column++
+}
+
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func isIdentifierStart(b byte) bool {
+	return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+func isIdentifierContinue(b byte) bool {
+	return isIdentifierStart(b) || b >= '0' && b <= '9' || b == '.'
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }

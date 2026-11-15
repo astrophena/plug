@@ -5,8 +5,8 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
-	"hash/crc32"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,29 +15,32 @@ import (
 )
 
 // validate checks schema semantics and generated Go-name safety.
-func validate(schema *Schema) error {
-	if !validIdentifier(schema.packageName) {
-		return diagnostic(Position{Line: 1, Column: 1}, "invalid package name %q", schema.packageName)
+func validate(s *Schema) error {
+	if !validIdentifier(s.packageName) {
+		return diagnostic(Position{
+			Line:   1,
+			Column: 1,
+		}, "invalid package name %q", s.packageName)
 	}
 
-	for _, category := range schema.categories {
-		if category.name == "" {
-			return diagnostic(category.position, "category name is empty")
+	for _, c := range s.categories {
+		if c.name == "" {
+			return diagnostic(c.position, "category name is empty")
 		}
-		if category.name != strings.TrimSpace(category.name) {
-			return diagnostic(category.position, "category name %q has leading or trailing whitespace", category.name)
+		if c.name != strings.TrimSpace(c.name) {
+			return diagnostic(c.position, "category name %q has leading or trailing whitespace", c.name)
 		}
-		if len(category.types) == 0 && len(category.methods) == 0 {
-			return diagnostic(category.position, "category %q contains no types or methods", category.name)
+		if len(c.types) == 0 && len(c.methods) == 0 {
+			return diagnostic(c.position, "category %q contains no types or methods", c.name)
 		}
 	}
 
 	permissions := make(map[string]Position)
-	for _, permission := range schema.permissions {
-		if err := checkQualifiedName(permission.name, permission.position, "permission"); err != nil {
+	for _, p := range s.permissions {
+		if err := checkQualifiedName(p.name, p.position, "permission"); err != nil {
 			return err
 		}
-		if err := addUnique(permissions, permission.name, permission.position, "permission"); err != nil {
+		if err := addUnique(permissions, p.name, p.position, "permission"); err != nil {
 			return err
 		}
 	}
@@ -52,7 +55,7 @@ func validate(schema *Schema) error {
 			Column: 1,
 		}
 	}
-	if schemaHasHTTP(schema) {
+	if schemaHasHTTP(s) {
 		goNames["HTTPRoutes"] = Position{
 			Line:   1,
 			Column: 1,
@@ -67,7 +70,7 @@ func validate(schema *Schema) error {
 		mux          http.ServeMux
 	)
 
-	for _, value := range schema.newtypes {
+	for _, value := range s.newtypes {
 		if err := checkName(value.name, value.position, "type"); err != nil {
 			return err
 		}
@@ -85,55 +88,55 @@ func validate(schema *Schema) error {
 		}
 	}
 
-	for _, constructor := range schema.constructors {
-		if err := checkName(constructor.name, constructor.position, "constructor"); err != nil {
+	for _, c := range s.constructors {
+		if err := checkName(c.name, c.position, "constructor"); err != nil {
 			return err
 		}
-		if err := checkName(constructor.result, constructor.position, "result type"); err != nil {
+		if err := checkName(c.result, c.position, "result type"); err != nil {
 			return err
 		}
-		if isPrimitive(constructor.result) {
-			return diagnostic(constructor.position, "constructor result %q is a primitive", constructor.result)
+		if isPrimitive(c.result) {
+			return diagnostic(c.position, "constructor result %q is a primitive", c.result)
 		}
-		if err := addUnique(constructors, constructor.name, constructor.position, "constructor"); err != nil {
+		if err := addUnique(constructors, c.name, c.position, "constructor"); err != nil {
 			return err
 		}
-		if err := addUnique(goNames, "constructorID"+names.Go(constructor.name), constructor.position, "generated Go declaration"); err != nil {
+		if err := addUnique(goNames, "constructorID"+names.Go(c.name), c.position, "generated Go declaration"); err != nil {
 			return err
 		}
-		if err := validateFields(constructor.fields); err != nil {
+		if err := validateFields(c.fields); err != nil {
 			return err
 		}
-		groups[constructor.result] = append(groups[constructor.result], constructor)
+		groups[c.result] = append(groups[c.result], c)
 	}
 
 	for result, group := range groups {
-		position := group[0].position
-		if err := addUnique(types, result, position, "type"); err != nil {
+		pos := group[0].position
+		if err := addUnique(types, result, pos, "type"); err != nil {
 			return err
 		}
-		if err := addUnique(goNames, names.Go(result), position, "generated Go declaration"); err != nil {
+		if err := addUnique(goNames, names.Go(result), pos, "generated Go declaration"); err != nil {
 			return err
 		}
 		if len(group) > 1 {
-			if err := addUnique(goNames, "Unknown"+names.Go(result), position, "generated Go declaration"); err != nil {
+			if err := addUnique(goNames, "Unknown"+names.Go(result), pos, "generated Go declaration"); err != nil {
 				return err
 			}
-			for _, constructor := range group {
-				if err := addUnique(goNames, names.Go(constructor.name), constructor.position, "generated Go declaration"); err != nil {
+			for _, c := range group {
+				if err := addUnique(goNames, names.Go(c.name), c.position, "generated Go declaration"); err != nil {
 					return err
 				}
 			}
 		}
 	}
 
-	newtypeMap := make(map[string]Position, len(schema.newtypes))
-	for _, nt := range schema.newtypes {
+	newtypeMap := make(map[string]Position, len(s.newtypes))
+	for _, nt := range s.newtypes {
 		newtypeMap[nt.name] = nt.position
 	}
 
 	declaredTypeNames := make(map[string]Position)
-	for _, dt := range schema.types {
+	for _, dt := range s.types {
 		if err := checkName(dt.name, dt.position, "type"); err != nil {
 			return err
 		}
@@ -151,52 +154,52 @@ func validate(schema *Schema) error {
 		}
 	}
 
-	for _, method := range schema.methods {
-		if err := checkQualifiedName(method.name, method.position, "method"); err != nil {
+	for _, m := range s.methods {
+		if err := checkQualifiedName(m.name, m.position, "method"); err != nil {
 			return err
 		}
-		goName := names.GoMethod(method.name)
-		if goName == "Close" && !isRaw(method.response) {
-			return diagnostic(method.position, "method %q conflicts with generated Client.Close", method.name)
+		goName := names.GoMethod(m.name)
+		if goName == "Close" && !isRaw(m.response) {
+			return diagnostic(m.position, "method %q conflicts with generated Client.Close", m.name)
 		}
-		if err := addUnique(methods, method.name, method.position, "method"); err != nil {
+		if err := addUnique(methods, m.name, m.position, "method"); err != nil {
 			return err
 		}
-		if err := addUnique(handlers, goName, method.position, "generated Go declaration"); err != nil {
+		if err := addUnique(handlers, goName, m.position, "generated Go declaration"); err != nil {
 			return err
 		}
-		if isRaw(method.response) {
-			if err := addUnique(goNames, "Open"+goName, method.position, "generated Go declaration"); err != nil {
+		if isRaw(m.response) {
+			if err := addUnique(goNames, "Open"+goName, m.position, "generated Go declaration"); err != nil {
 				return err
 			}
 		}
-		if len(method.fields) > 0 {
-			if err := addUnique(goNames, goName+"Request", method.position, "generated Go declaration"); err != nil {
+		if len(m.fields) > 0 {
+			if err := addUnique(goNames, goName+"Request", m.position, "generated Go declaration"); err != nil {
 				return err
 			}
 		}
-		if err := addUnique(goNames, "methodID"+goName, method.position, "generated Go declaration"); err != nil {
+		if err := addUnique(goNames, "methodID"+goName, m.position, "generated Go declaration"); err != nil {
 			return err
 		}
-		if err := addUnique(goNames, "method"+goName, method.position, "generated Go declaration"); err != nil {
+		if err := addUnique(goNames, "method"+goName, m.position, "generated Go declaration"); err != nil {
 			return err
 		}
-		if err := validateFields(method.fields); err != nil {
+		if err := validateFields(m.fields); err != nil {
 			return err
 		}
-		if method.public == (method.permission != "") {
-			return diagnostic(method.position, "method %q must be public or require exactly one permission", method.name)
+		if m.public == (m.permission != "") {
+			return diagnostic(m.position, "method %q must be public or require exactly one permission", m.name)
 		}
-		if method.permission != "" {
-			if _, ok := permissions[method.permission]; !ok {
-				return diagnostic(method.position, "method %q requires undeclared permission %q", method.name, method.permission)
+		if m.permission != "" {
+			if _, ok := permissions[m.permission]; !ok {
+				return diagnostic(m.position, "method %q requires undeclared permission %q", m.name, m.permission)
 			}
 		}
-		for _, binding := range method.http {
-			if isRaw(method.response) {
-				return diagnostic(binding.position, "raw method %q cannot have an HTTP binding", method.name)
+		for _, binding := range m.http {
+			if isRaw(m.response) {
+				return diagnostic(binding.position, "raw method %q cannot have an HTTP binding", m.name)
 			}
-			if err := validateHTTPBinding(binding, method.fields); err != nil {
+			if err := validateHTTPBinding(binding, m.fields); err != nil {
 				return err
 			}
 			pattern := binding.verb + " " + binding.path
@@ -209,119 +212,121 @@ func validate(schema *Schema) error {
 		}
 	}
 
-	categorizedTypes := make(map[string]string)
-	categorizedMethods := make(map[string]string)
-	for _, category := range schema.categories {
-		for _, typ := range category.types {
+	var (
+		typeCategories   = make(map[string]string)
+		methodCategories = make(map[string]string)
+	)
+	for _, c := range s.categories {
+		for _, typ := range c.types {
 			if _, ok := types[typ]; !ok {
-				return diagnostic(category.position, "category %q contains unknown type %q", category.name, typ)
+				return diagnostic(c.position, "category %q contains unknown type %q", c.name, typ)
 			}
-			if previous, ok := categorizedTypes[typ]; ok {
-				return diagnostic(category.position, "type %q appears in categories %q and %q", typ, previous, category.name)
+			if previous, ok := typeCategories[typ]; ok {
+				return diagnostic(c.position, "type %q appears in categories %q and %q", typ, previous, c.name)
 			}
-			categorizedTypes[typ] = category.name
+			typeCategories[typ] = c.name
 		}
-		for _, method := range category.methods {
-			if _, ok := methods[method]; !ok {
-				return diagnostic(category.position, "category %q contains unknown method %q", category.name, method)
+		for _, m := range c.methods {
+			if _, ok := methods[m]; !ok {
+				return diagnostic(c.position, "category %q contains unknown method %q", c.name, m)
 			}
-			if previous, ok := categorizedMethods[method]; ok {
-				return diagnostic(category.position, "method %q appears in categories %q and %q", method, previous, category.name)
+			if previous, ok := methodCategories[m]; ok {
+				return diagnostic(c.position, "method %q appears in categories %q and %q", m, previous, c.name)
 			}
-			categorizedMethods[method] = category.name
+			methodCategories[m] = c.name
 		}
 	}
 
 	known := func(name string) bool {
 		return isPrimitive(name) || hasKey(types, name)
 	}
-	for _, constructor := range schema.constructors {
-		for _, field := range constructor.fields {
-			if err := validateTypeRef(field.typ, field.position, false, known); err != nil {
+	for _, c := range s.constructors {
+		for _, f := range c.fields {
+			if err := validateTypeRef(f.typ, f.position, false, known); err != nil {
 				return err
 			}
 		}
 	}
 
 	errorTypes := make(map[string]Position)
-	for _, method := range schema.methods {
-		for _, field := range method.fields {
-			if err := validateTypeRef(field.typ, field.position, false, known); err != nil {
+	for _, m := range s.methods {
+		for _, f := range m.fields {
+			if err := validateTypeRef(f.typ, f.position, false, known); err != nil {
 				return err
 			}
 		}
-		fields := make(map[string]field, len(method.fields))
-		for _, field := range method.fields {
-			fields[field.name] = field
+		fields := make(map[string]field, len(m.fields))
+		for _, f := range m.fields {
+			fields[f.name] = f
 		}
-		for _, binding := range method.http {
-			parameters, _ := pathParameters(binding.path)
-			for _, parameter := range parameters {
-				if !httpTextType(fields[parameter].typ, schema.newtypes, false) {
-					return diagnostic(binding.position, "HTTP path parameter %q must be a scalar field", parameter)
+		for _, binding := range m.http {
+			params, _ := pathParameters(binding.path)
+			for _, param := range params {
+				if !httpTextType(fields[param].typ, s.newtypes, false) {
+					return diagnostic(binding.position, "HTTP path parameter %q must be a scalar field", param)
 				}
-				if strings.Contains(binding.path, "{"+parameter+"...}") {
-					name := fields[parameter].typ.name
-					for _, value := range schema.newtypes {
+				if strings.Contains(binding.path, "{"+param+"...}") {
+					name := fields[param].typ.name
+					for _, value := range s.newtypes {
 						if value.name == name {
 							name = value.base
 							break
 						}
 					}
 					if name != "string" {
-						return diagnostic(binding.position, "HTTP wildcard parameter %q must be a string field", parameter)
+						return diagnostic(binding.position, "HTTP wildcard parameter %q must be a string field", param)
 					}
 				}
 			}
 			if binding.verb == "GET" || binding.verb == "DELETE" {
-				for _, field := range method.fields {
-					if !httpTextType(field.typ, schema.newtypes, true) {
-						return diagnostic(binding.position, "%s binding field %q must be a scalar or list of scalars", binding.verb, field.name)
+				for _, f := range m.fields {
+					if !httpTextType(f.typ, s.newtypes, true) {
+						return diagnostic(binding.position, "%s binding field %q must be a scalar or list of scalars", binding.verb, f.name)
 					}
 				}
 			}
 		}
-		if err := validateTypeRef(method.response, method.position, true, known); err != nil {
+		if err := validateTypeRef(m.response, m.position, true, known); err != nil {
 			return err
 		}
-		if method.errorType != nil {
-			if method.errorType.optional || method.errorType.element != nil || method.errorType.name == "" {
-				return diagnostic(method.position, "method error must be a named constructor type")
+		if m.errorType != nil {
+			if m.errorType.optional || m.errorType.element != nil || m.errorType.name == "" {
+				return diagnostic(m.position, "method error must be a named constructor type")
 			}
-			if _, ok := groups[method.errorType.name]; !ok {
-				return diagnostic(method.position, "method error %q is not a constructor type", method.errorType.name)
+			if _, ok := groups[m.errorType.name]; !ok {
+				return diagnostic(m.position, "method error %q is not a constructor type", m.errorType.name)
 			}
-			errorTypes[method.errorType.name] = method.position
+			errorTypes[m.errorType.name] = m.position
 		}
 	}
 
-	for _, constructor := range schema.constructors {
-		if _, ok := errorTypes[constructor.result]; ok {
-			for _, field := range constructor.fields {
-				if names.Go(field.name) == "Error" {
-					return diagnostic(field.position, "error constructor field %q conflicts with the generated Error method", field.name)
+	for _, c := range s.constructors {
+		if _, ok := errorTypes[c.result]; ok {
+			for _, f := range c.fields {
+				if names.Go(f.name) == "Error" {
+					return diagnostic(f.position, "error constructor field %q conflicts with the generated Error method", f.name)
 				}
 			}
-		} else if constructor.httpStatus != 0 {
-			return diagnostic(constructor.position, "HTTP status is only valid on declared error constructors")
+		} else if c.httpStatus != 0 {
+			return diagnostic(c.position, "HTTP status is only valid on declared error constructors")
 		}
-		if constructor.httpStatus != 0 && (constructor.httpStatus < 400 || constructor.httpStatus > 599) {
-			return diagnostic(constructor.position, "invalid error HTTP status %d", constructor.httpStatus)
+		if c.httpStatus != 0 && (c.httpStatus < 400 || c.httpStatus > 599) {
+			return diagnostic(c.position, "invalid error HTTP status %d", c.httpStatus)
 		}
-		for _, field := range constructor.fields {
-			if name := referencedName(field.typ, errorTypes); name != "" {
-				return diagnostic(field.position, "error type %q cannot be used as a field type", name)
+		for _, f := range c.fields {
+			if name := referencedName(f.typ, errorTypes); name != "" {
+				return diagnostic(f.position, "error type %q cannot be used as a field type", name)
 			}
 		}
 	}
-	for _, method := range schema.methods {
-		for _, field := range method.fields {
-			if name := referencedName(field.typ, errorTypes); name != "" {
-				return diagnostic(field.position, "error type %q cannot be used as a request field", name)
+	for _, m := range s.methods {
+		for _, f := range m.fields {
+			if name := referencedName(f.typ, errorTypes); name != "" {
+				return diagnostic(f.position, "error type %q cannot be used as a request field", name)
 			}
 		}
-		if name := referencedName(method.response, errorTypes); name != "" {
-			return diagnostic(method.position, "error type %q cannot be used as a response", name)
+		if name := referencedName(m.response, errorTypes); name != "" {
+			return diagnostic(m.position, "error type %q cannot be used as a response", name)
 		}
 	}
 
@@ -343,73 +348,43 @@ func httpTextType(ref typeRef, newtypes []newtype, allowList bool) bool {
 	})
 }
 
-func assignIDs(schema *Schema) error {
-	ids := make(map[uint32]string, len(schema.constructors)+len(schema.methods))
-	assign := func(canonical string, position Position) (uint32, error) {
-		id := crc32.ChecksumIEEE([]byte(canonical))
-		if previous, ok := ids[id]; ok {
-			return 0, diagnostic(position, "CRC32 collision between %q and %q (0x%08x)", previous, canonical, id)
-		}
-		ids[id] = canonical
-		return id, nil
-	}
-
-	for i := range schema.constructors {
-		c := &schema.constructors[i]
-		id, err := assign(constructorText(schema.packageName, *c, false), c.position)
-		if err != nil {
-			return err
-		}
-		c.id = id
-	}
-	for i := range schema.methods {
-		m := &schema.methods[i]
-		id, err := assign(methodText(*m, false), m.position)
-		if err != nil {
-			return err
-		}
-		m.id = id
-	}
-	return nil
-}
-
 func validateFields(fields []field) error {
 	var (
 		fieldNames = make(map[string]Position)
 		goNames    = make(map[string]Position)
 		optional   bool
 	)
-	for _, field := range fields {
-		if err := checkName(field.name, field.position, "field"); err != nil {
+	for _, f := range fields {
+		if err := checkName(f.name, f.position, "field"); err != nil {
 			return err
 		}
-		if err := addUnique(fieldNames, field.name, field.position, "field"); err != nil {
+		if err := addUnique(fieldNames, f.name, f.position, "field"); err != nil {
 			return err
 		}
-		if err := addUnique(goNames, names.Go(field.name), field.position, "generated Go field"); err != nil {
+		if err := addUnique(goNames, names.Go(f.name), f.position, "generated Go field"); err != nil {
 			return err
 		}
-		if field.typ.optional {
+		if f.typ.optional {
 			optional = true
 		} else if optional {
-			return diagnostic(field.position, "required field %q follows an optional extension field", field.name)
+			return diagnostic(f.position, "required field %q follows an optional extension field", f.name)
 		}
 	}
 	return nil
 }
 
-func validateTypeRef(ref typeRef, position Position, response bool, known func(string) bool) error {
+func validateTypeRef(ref typeRef, pos Position, response bool, known func(string) bool) error {
 	if ref.element != nil {
 		if ref.element.optional {
-			return diagnostic(position, "list elements cannot be optional; wrap the list instead")
+			return diagnostic(pos, "list elements cannot be optional; wrap the list instead")
 		}
-		return validateTypeRef(*ref.element, position, false, known)
+		return validateTypeRef(*ref.element, pos, false, known)
 	}
 	if !known(ref.name) {
-		return diagnostic(position, "unknown type %q", ref.name)
+		return diagnostic(pos, "unknown type %q", ref.name)
 	}
 	if (ref.name == "void" || ref.name == "raw") && (!response || ref.optional) {
-		return diagnostic(position, "%s is only valid as a non-optional method response", ref.name)
+		return diagnostic(pos, "%s is only valid as a non-optional method response", ref.name)
 	}
 	return nil
 }
@@ -417,9 +392,9 @@ func validateTypeRef(ref typeRef, position Position, response bool, known func(s
 func rejectRecursiveTypes(groups map[string][]constructor) error {
 	edges := make(map[string][]string)
 	for result, constructors := range groups {
-		for _, constructor := range constructors {
-			for _, field := range constructor.fields {
-				if name := namedType(field.typ); name != "" && hasKey(groups, name) {
+		for _, c := range constructors {
+			for _, f := range c.fields {
+				if name := namedType(f.typ); name != "" && hasKey(groups, name) {
 					edges[result] = append(edges[result], name)
 				}
 			}
@@ -431,8 +406,8 @@ func rejectRecursiveTypes(groups map[string][]constructor) error {
 		visiting
 		done
 	)
-	state := make(map[string]uint8)
 	var (
+		state = make(map[string]uint8)
 		stack []string
 		visit func(string) error
 	)
@@ -480,17 +455,17 @@ func referencedName(ref typeRef, names map[string]Position) string {
 	return ""
 }
 
-func addUnique(values map[string]Position, name string, position Position, kind string) error {
+func addUnique(values map[string]Position, name string, pos Position, kind string) error {
 	if previous, ok := values[name]; ok {
-		return diagnostic(position, "duplicate %s %q; first declared at %s", kind, name, previous)
+		return diagnostic(pos, "duplicate %s %q; first declared at %s", kind, name, previous)
 	}
-	values[name] = position
+	values[name] = pos
 	return nil
 }
 
-func checkName(name string, position Position, kind string) error {
+func checkName(name string, pos Position, kind string) error {
 	if !validIdentifier(name) {
-		return diagnostic(position, "invalid %s name %q", kind, name)
+		return diagnostic(pos, "invalid %s name %q", kind, name)
 	}
 	if slices.Contains([]string{
 		"http",
@@ -504,37 +479,37 @@ func checkName(name string, position Position, kind string) error {
 		"type",
 		"version",
 	}, name) {
-		return diagnostic(position, "%s name %q is reserved", kind, name)
+		return diagnostic(pos, "%s name %q is reserved", kind, name)
 	}
 	return nil
 }
 
-func checkQualifiedName(name string, position Position, kind string) error {
-	group, method, ok := strings.Cut(name, ".")
-	if !ok || group == "" || method == "" || strings.Contains(method, ".") {
-		return diagnostic(position, "%s name %q must have the form group.name", kind, name)
+func checkQualifiedName(name string, pos Position, kind string) error {
+	group, m, ok := strings.Cut(name, ".")
+	if !ok || group == "" || m == "" || strings.Contains(m, ".") {
+		return diagnostic(pos, "%s name %q must have the form group.name", kind, name)
 	}
-	if err := checkName(group, position, kind+" group"); err != nil {
+	if err := checkName(group, pos, kind+" group"); err != nil {
 		return err
 	}
-	return checkName(method, position, kind)
+	return checkName(m, pos, kind)
 }
 
 func validateHTTPBinding(binding httpBinding, fields []field) error {
 	if !slices.Contains([]string{"DELETE", "GET", "PATCH", "POST", "PUT"}, binding.verb) {
 		return diagnostic(binding.position, "unsupported HTTP verb %q", binding.verb)
 	}
-	parameters, err := pathParameters(binding.path)
+	params, err := pathParameters(binding.path)
 	if err != nil {
 		return diagnostic(binding.position, "invalid HTTP path %q: %v", binding.path, err)
 	}
 	fieldNames := make(map[string]bool, len(fields))
-	for _, field := range fields {
-		fieldNames[field.name] = true
+	for _, f := range fields {
+		fieldNames[f.name] = true
 	}
-	for _, parameter := range parameters {
-		if !fieldNames[parameter] {
-			return diagnostic(binding.position, "HTTP path parameter %q is not a request field", parameter)
+	for _, param := range params {
+		if !fieldNames[param] {
+			return diagnostic(binding.position, "HTTP path parameter %q is not a request field", param)
 		}
 	}
 	return nil
@@ -552,10 +527,10 @@ func checkHTTPPattern(mux *http.ServeMux, pattern string) (err error) {
 
 func pathParameters(path string) ([]string, error) {
 	if !strings.HasPrefix(path, "/") {
-		return nil, fmt.Errorf("path must start with '/'")
+		return nil, errors.New("path must start with '/'")
 	}
 	if strings.ContainsAny(path, "?#") {
-		return nil, fmt.Errorf("query strings and fragments are not allowed")
+		return nil, errors.New("query strings and fragments are not allowed")
 	}
 	var (
 		result []string
@@ -565,17 +540,17 @@ func pathParameters(path string) ([]string, error) {
 		start := strings.IndexByte(path[offset:], '{')
 		if start < 0 {
 			if strings.ContainsRune(path[offset:], '}') {
-				return nil, fmt.Errorf("unmatched '}'")
+				return nil, errors.New("unmatched '}'")
 			}
 			break
 		}
 		start += offset
 		if strings.ContainsRune(path[offset:start], '}') {
-			return nil, fmt.Errorf("unmatched '}'")
+			return nil, errors.New("unmatched '}'")
 		}
 		end := strings.IndexByte(path[start+1:], '}')
 		if end < 0 {
-			return nil, fmt.Errorf("unmatched '{'")
+			return nil, errors.New("unmatched '{'")
 		}
 		end += start + 1
 		name := strings.TrimSuffix(path[start+1:end], "...")
@@ -595,4 +570,13 @@ func pathParameters(path string) ([]string, error) {
 func hasKey[K comparable, V any](values map[K]V, key K) bool {
 	_, ok := values[key]
 	return ok
+}
+
+func schemaHasHTTP(s *Schema) bool {
+	for _, m := range s.methods {
+		if len(m.http) > 0 {
+			return true
+		}
+	}
+	return false
 }

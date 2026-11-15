@@ -9,38 +9,40 @@ import (
 	"go.astrophena.name/plug/plugimpl"
 )
 
-// RuntimeSchema returns independent, ordered metadata for a schema returned
-// by [Parse]. Types contain newtypes first, then records and sums, each group
-// ordered by name. Methods, constructors, and HTTP bindings are also ordered.
-func RuntimeSchema(parsed *Schema) plug.Schema {
-	view := newSchemaView(parsed)
-	result := plug.Schema{
-		Package:       parsed.packageName,
-		Major:         parsed.major,
-		Family:        plugimpl.FamilyFingerprint(parsed.packageName, parsed.major),
-		Documentation: parsed.documentation,
-		Fingerprint:   fingerprint(parsed),
-		Source:        view.format(),
-	}
+// RuntimeSchema returns an independent metadata snapshot of s.
+// Types list newtypes first, then records and sums, sorted by name within each group.
+// Methods and constructors are sorted by name; HTTP bindings by verb and path.
+func RuntimeSchema(s *Schema) plug.Schema {
+	var (
+		v   = newView(s)
+		out = plug.Schema{
+			Package:       s.packageName,
+			Major:         s.major,
+			Family:        plugimpl.FamilyFingerprint(s.packageName, s.major),
+			Documentation: s.documentation,
+			Fingerprint:   fingerprint(s),
+			Source:        v.format(),
+		}
+	)
 
-	for _, permission := range view.permissions {
-		result.Permissions = append(result.Permissions, plug.PermissionInfo{
-			Name:          permission.name,
-			Documentation: permission.documentation,
+	for _, p := range v.permissions {
+		out.Permissions = append(out.Permissions, plug.PermissionInfo{
+			Name:          p.name,
+			Documentation: p.documentation,
 		})
 	}
 
-	for _, category := range view.categories {
-		result.Categories = append(result.Categories, plug.CategoryInfo{
-			Name:          category.name,
-			Documentation: category.documentation,
-			Types:         category.types,
-			Methods:       category.methods,
+	for _, c := range v.categories {
+		out.Categories = append(out.Categories, plug.CategoryInfo{
+			Name:          c.name,
+			Documentation: c.documentation,
+			Types:         c.types,
+			Methods:       c.methods,
 		})
 	}
 
-	for _, value := range view.newtypes {
-		result.Types = append(result.Types, plug.TypeInfo{
+	for _, value := range v.newtypes {
+		out.Types = append(out.Types, plug.TypeInfo{
 			Name:          value.name,
 			Documentation: value.documentation,
 			Kind:          plug.TypeNewtype,
@@ -48,10 +50,12 @@ func RuntimeSchema(parsed *Schema) plug.Schema {
 		})
 	}
 
-	errorTypes := errorTypeNames(parsed)
-	for _, name := range view.groupNames {
-		constructors := view.groups[name]
-		kind := plug.TypeRecord
+	errorTypes := errorTypeNames(s)
+	for _, name := range v.groupNames {
+		var (
+			constructors = v.groups[name]
+			kind         = plug.TypeRecord
+		)
 		if len(constructors) > 1 {
 			kind = plug.TypeSum
 		}
@@ -63,58 +67,58 @@ func RuntimeSchema(parsed *Schema) plug.Schema {
 		if len(constructors) == 1 {
 			typ.Documentation = constructors[0].documentation
 		}
-		if dt := view.declaredTypes[name]; dt.documentation != "" {
+		if dt := v.declaredTypes[name]; dt.documentation != "" {
 			typ.Documentation = dt.documentation
 		}
-		for _, constructor := range constructors {
+		for _, c := range constructors {
 			typ.Constructors = append(typ.Constructors, plug.ConstructorInfo{
-				Name:          constructor.name,
-				Documentation: constructor.documentation,
-				ID:            constructor.id,
-				Fields:        runtimeFields(constructor.fields),
-				HTTPStatus:    constructor.httpStatus,
+				Name:          c.name,
+				Documentation: c.documentation,
+				ID:            c.id,
+				Fields:        runtimeFields(c.fields),
+				HTTPStatus:    c.httpStatus,
 			})
 		}
-		result.Types = append(result.Types, typ)
+		out.Types = append(out.Types, typ)
 	}
 
-	for _, method := range view.methods {
+	for _, m := range v.methods {
 		info := plug.MethodInfo{
-			Name:          method.name,
-			Documentation: method.documentation,
-			ID:            method.id,
-			Fields:        runtimeFields(method.fields),
-			Response:      runtimeTypeExpr(method.response),
-			Public:        method.public,
-			Permission:    method.permission,
+			Name:          m.name,
+			Documentation: m.documentation,
+			ID:            m.id,
+			Fields:        runtimeFields(m.fields),
+			Response:      runtimeTypeExpr(m.response),
+			Public:        m.public,
+			Permission:    m.permission,
 		}
-		if method.errorType != nil {
-			info.Error = method.errorType.name
+		if m.errorType != nil {
+			info.Error = m.errorType.name
 		}
-		for _, binding := range method.http {
+		for _, binding := range m.http {
 			info.HTTP = append(info.HTTP, plug.HTTPBindingInfo{
 				Verb: binding.verb,
 				Path: binding.path,
 			})
 		}
-		result.Methods = append(result.Methods, info)
+		out.Methods = append(out.Methods, info)
 	}
-	return result
+	return out
 }
 
 func runtimeFields(fields []field) []plug.FieldInfo {
 	if len(fields) == 0 {
 		return nil
 	}
-	result := make([]plug.FieldInfo, 0, len(fields))
-	for _, field := range fields {
-		result = append(result, plug.FieldInfo{
-			Name:          field.name,
-			Documentation: field.documentation,
-			Type:          runtimeTypeExpr(field.typ),
+	out := make([]plug.FieldInfo, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, plug.FieldInfo{
+			Name:          f.name,
+			Documentation: f.documentation,
+			Type:          runtimeTypeExpr(f.typ),
 		})
 	}
-	return result
+	return out
 }
 
 func runtimeTypeExpr(ref typeRef) plug.TypeExpr {
@@ -135,4 +139,14 @@ func runtimeTypeExpr(ref typeRef) plug.TypeExpr {
 		Name:     ref.name,
 		Optional: ref.optional,
 	}
+}
+
+func errorTypeNames(s *Schema) map[string]bool {
+	names := make(map[string]bool)
+	for _, m := range s.methods {
+		if m.errorType != nil {
+			names[m.errorType.name] = true
+		}
+	}
+	return names
 }

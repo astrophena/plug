@@ -1,0 +1,38 @@
+package x version 3
+
+permission item.read
+
+category "Data"
+
+// Access methods.
+type Auth
+
+passkey key: bytes = Auth
+
+password hash: bytes = Auth
+
+// Lookup failures.
+type Failure
+
+missing id: ID = Failure httpStatus 404
+
+// Item identifier.
+type ID = i64
+
+item id: ID auth: Auth note: string? = Item
+
+category "Items"
+
+x.get id: ID -> Item
+  throws Failure
+  requires item.read
+  http GET "/items/{id}"
+  http POST "/get"
+
+x.open port: u32 -> raw
+  throws Failure
+  public
+
+category "Service"
+
+x.ping -> void public
