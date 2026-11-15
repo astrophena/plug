@@ -12,8 +12,8 @@ import (
 	"go.astrophena.name/plug"
 )
 
-// Normalize returns the standard Go formatting of text without comment markers
-// or a trailing newline.
+// Normalize formats text as a Go doc comment,
+// without comment markers or a trailing newline.
 func Normalize(text string) string {
 	var parser comment.Parser
 	return printComment(parser.Parse(text))
@@ -25,7 +25,8 @@ func printComment(d *comment.Doc) string {
 }
 
 // Parser resolves documentation references to schema types and methods.
-// Unknown references remain literal text. Explicit URL links take precedence.
+// Unknown references remain literal text.
+// Explicit URL links take precedence.
 type Parser struct {
 	names    map[string]bool
 	prefixes map[string]bool
@@ -48,8 +49,9 @@ func NewParser(s *plug.Schema) *Parser {
 	return p
 }
 
-// Parse parses text. Resolved DocLink nodes store the complete schema name in
-// Name, with empty ImportPath and Recv fields.
+// Parse resolves schema references in text.
+// Each resolved [comment.DocLink] has its full name in Name
+// and empty ImportPath and Recv fields.
 func (p *Parser) Parse(text string) *comment.Doc { return p.parse(text, false) }
 
 // Comment replaces schema references with plain names and formats the text.

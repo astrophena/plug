@@ -6,6 +6,7 @@ package browser
 
 import (
 	"fmt"
+	"go/doc/comment"
 	"net/http"
 	"strings"
 
@@ -228,6 +229,43 @@ func markdownCode(sb *strings.Builder, source string) {
 	for line := range strings.SplitSeq(strings.TrimSuffix(source, "\n"), "\n") {
 		sb.WriteString("    ")
 		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	sb.WriteByte('\n')
+}
+
+func (b *browser) docMarkdown(text string) string {
+	printer := comment.Printer{
+		HeadingLevel: 5,
+		HeadingID:    func(*comment.Heading) string { return "" },
+		DocLinkURL: func(link *comment.DocLink) string {
+			if b.hasMethod(link.Name) {
+				return "#method-" + link.Name
+			}
+			return "#type-" + link.Name
+		},
+	}
+	return strings.TrimSuffix(string(printer.Markdown(b.docs.Parse(text))), "\n")
+}
+
+// markdownListDoc writes a description after a list item's label.
+func (b *browser) markdownListDoc(sb *strings.Builder, text string) {
+	if text == "" {
+		sb.WriteByte('\n')
+		return
+	}
+	sb.WriteString("\n\n")
+	for line := range strings.SplitSeq(b.docMarkdown(text), "\n") {
+		if line != "" {
+			sb.WriteString("  ")
+			// Expand code-block tabs before adding list indentation
+			// to preserve their four-space width.
+			for strings.HasPrefix(line, "\t") {
+				sb.WriteString("    ")
+				line = line[1:]
+			}
+			sb.WriteString(line)
+		}
 		sb.WriteByte('\n')
 	}
 	sb.WriteByte('\n')

@@ -10,7 +10,11 @@ package browser
 
 import (
 	"bytes"
+	"embed"
+	"errors"
 	"fmt"
+	"go/doc/comment"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -25,6 +29,7 @@ import (
 )
 
 // New returns a schema browser with HTML pages and an index.md download.
+// Serve it with [go.astrophena.name/base/web.Server] using [StaticFS].
 func New(schema *plug.Schema) (http.Handler, error) {
 	if err := plugimpl.ValidateSchema(schema); err != nil {
 		return nil, err
@@ -604,4 +609,54 @@ func typeReferences(typ plug.TypeExpr, name string) bool {
 		return typeReferences(*typ.Element, name)
 	}
 	return typ.Kind == plug.TypeExprNamed && typ.Name == name
+}
+
+//go:embed static
+var assets embed.FS
+
+// StaticFS combines files with browser assets.
+// Earlier files take precedence.
+// Pass it to [go.astrophena.name/base/web.Server.StaticFS].
+func StaticFS(files ...fs.FS) fs.FS {
+	result := make(overlayFS, 0, len(files)+1)
+	for _, f := range files {
+		if f != nil {
+			result = append(result, f)
+		}
+	}
+	return append(result, assets)
+}
+
+type overlayFS []fs.FS
+
+func (o overlayFS) Open(name string) (fs.File, error) {
+	for _, f := range o {
+		file, err := f.Open(name)
+		if err == nil {
+			return file, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
+
+	return nil, &fs.PathError{
+		Op:   "open",
+		Path: name,
+		Err:  fs.ErrNotExist,
+	}
+}
+
+func (p page) docHTML(text string) string {
+	printer := comment.Printer{
+		HeadingLevel: 4,
+		HeadingID:    func(*comment.Heading) string { return "" },
+		DocLinkURL: func(link *comment.DocLink) string {
+			if p.browser.hasMethod(link.Name) {
+				return p.methodURL(link.Name)
+			}
+			return p.typeURL(link.Name)
+		},
+	}
+	return string(printer.HTML(p.browser.docs.Parse(text)))
 }

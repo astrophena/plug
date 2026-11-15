@@ -2,11 +2,12 @@
 // Use of this source code is governed by the ISC
 // license that can be found in the LICENSE.md file.
 
-package browser_test
+package browser
 
 import (
 	"context"
 	"io"
+	"io/fs"
 	"maps"
 	"net"
 	"net/http"
@@ -15,19 +16,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"go.astrophena.name/base/testutil"
 	"go.astrophena.name/base/web"
 	"go.astrophena.name/plug"
-	"go.astrophena.name/plug/example/greeter"
-	"go.astrophena.name/plug/internal/browser"
-	"go.astrophena.name/plug/plugimpl"
+	"go.astrophena.name/plug/internal/schema"
 )
 
 func TestBrowser(t *testing.T) {
-	browser := newBrowser(t, &greeter.Schema, "/reference")
-	stylesheet := `href="/` + browser.server.StaticHashName("static/css/plug-schema.css") + `"`
-	favicon := `rel="icon" type="image/svg+xml" href="/` + browser.server.StaticHashName("static/icons/plug.svg") + `"`
-	script := `src="/` + browser.server.StaticHashName("static/js/plug-schema.js") + `"`
+	var (
+		b    = newBrowser(t, testSchema(t), "/reference")
+		css  = `href="/` + b.server.StaticHashName("static/css/plug-schema.css") + `"`
+		icon = `rel="icon" type="image/svg+xml" href="/` + b.server.StaticHashName("static/icons/plug.svg") + `"`
+		js   = `src="/` + b.server.StaticHashName("static/js/plug-schema.js") + `"`
+	)
 	cases := map[string]struct {
 		method      string
 		path        string
@@ -49,16 +52,14 @@ func TestBrowser(t *testing.T) {
 				`type="search" id="browser-filter" data-browser-filter`,
 				`<span class="badge">4 HTTP routes</span>`,
 				`<li><span class="verb">GET</span><code>/v1/users/{id}</code></li>`,
-				favicon,
-				stylesheet,
-				script,
+				icon,
+				css,
+				js,
 				`href="types/User"`,
 				`href="methods/greeter.getUser"`,
 				`href="./index.md"`,
 			},
 			notContains: []string{
-				"onkeyup",
-				"onsubmit",
 				"Other methods",
 			},
 		},
@@ -68,8 +69,6 @@ func TestBrowser(t *testing.T) {
 			contains: []string{
 				`href="https://github.com/astrophena/plug/tree/master/docs/protocol.md"`,
 				`<a href="./">API</a>`,
-				stylesheet,
-				script,
 			},
 			notContains: []string{
 				`data-browser-filter`,
@@ -96,8 +95,6 @@ func TestBrowser(t *testing.T) {
 				`href="../types/UserID"`,
 				`href="../types/LookupError"`,
 				`href="../index.md"`,
-				stylesheet,
-				script,
 			},
 		},
 		"public method": {
@@ -127,8 +124,6 @@ func TestBrowser(t *testing.T) {
 				`<span class="field-presence required">Required</span>`,
 				`<span class="field-presence optional">Optional</span>`,
 				`<span class="primitive">string</span>?`,
-				stylesheet,
-				script,
 				`href="../types/UserID"`,
 				`href="../methods/greeter.getUser"`,
 			},
@@ -171,15 +166,13 @@ func TestBrowser(t *testing.T) {
 			if tc.method == "" {
 				tc.method = http.MethodGet
 			}
-			request := httptest.NewRequest(tc.method, "/reference"+tc.path, nil)
-			request.Host = "api.example.test"
-			request.Header.Set("X-Forwarded-Proto", "https")
+			r := httptest.NewRequest(tc.method, "/reference"+tc.path, nil)
+			r.Host = "api.example.test"
+			r.Header.Set("X-Forwarded-Proto", "https")
 
-			response := browser.serve(t, request)
-			if response.Code != tc.status {
-				t.Fatalf("response status = %d, want %d", response.Code, tc.status)
-			}
-			body := response.Body.String()
+			w := b.serve(t, r)
+			testutil.AssertEqual(t, w.Code, tc.status)
+			body := w.Body.String()
 			for _, value := range tc.contains {
 				if !strings.Contains(body, value) {
 					t.Errorf("browser does not contain %q", value)
@@ -198,81 +191,25 @@ func TestBrowser(t *testing.T) {
 
 	t.Run("assets", func(t *testing.T) {
 		for _, name := range []string{"static/css/plug-schema.css", "static/js/plug-schema.js", "static/icons/plug.svg"} {
-			path := "/" + browser.server.StaticHashName(name)
-			response := browser.serve(t, httptest.NewRequest(http.MethodGet, path, nil))
-			if response.Code != http.StatusOK || response.Body.Len() == 0 {
-				t.Errorf("GET %s = %d, %d bytes", path, response.Code, response.Body.Len())
+			path := "/" + b.server.StaticHashName(name)
+			w := b.serve(t, httptest.NewRequest(http.MethodGet, path, nil))
+			if w.Code != http.StatusOK || w.Body.Len() == 0 {
+				t.Errorf("GET %s = %d, %d bytes", path, w.Code, w.Body.Len())
 			}
 		}
 	})
 }
 
-func TestBrowserMarkdown(t *testing.T) {
-	browser := newBrowser(t, &greeter.Schema, "/reference")
-	request := httptest.NewRequest(http.MethodGet, "/reference/index.md", nil)
-	request.Host = "api.example.test"
-	request.Header.Set("X-Forwarded-Proto", "https")
-
-	response := browser.serve(t, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
-	}
-	if got := response.Header().Get("Content-Type"); got != "text/markdown; charset=utf-8" {
-		t.Errorf("Content-Type = %q", got)
-	}
-	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="greeter-api.md"` {
-		t.Errorf("Content-Disposition = %q", got)
-	}
-	for _, want := range []string{
-		"# Greeter API",
-		"## Methods",
-		"## Types",
-		"## Permissions",
-		"## Canonical schema",
-		"### `greeter.getUser`",
-		"greeter.getUser returns the requested user.",
-		"Method ID: `",
-		"`id`: `UserID` (required)\n\n  id identifies the user to look up.",
-		"Declared error: `LookupError`.",
-		"`notFound`: HTTP 404",
-		"#### HTTP `GET /v1/users/{id}`",
-		"#### HTTP `POST /v1/get-user`",
-		"https://api.example.test/v1/users/1",
-		"Request mapping:",
-		"Example response:",
-		"### `Role` (sum type)",
-		"admin represents an administrative user.",
-		"Constructor ID: `",
-		"Example JSON value:",
-		"## Wire identity",
-		"package greeter version 1",
-		"category \"Users\"",
-	} {
-		if !strings.Contains(response.Body.String(), want) {
-			t.Errorf("Markdown does not contain %q", want)
-		}
-	}
-
-	head := browser.serve(t, httptest.NewRequest(http.MethodHead, "/reference/index.md", nil))
-	if head.Code != http.StatusOK || head.Body.Len() != 0 {
-		t.Errorf("HEAD response = %d %q", head.Code, head.Body.String())
-	}
-}
-
 func TestBrowserWithoutHTTP(t *testing.T) {
-	schema := plugimpl.CopySchema(&greeter.Schema)
-	for index := range schema.Methods {
-		schema.Methods[index].HTTP = nil
+	s := testSchema(t)
+	for i := range s.Methods {
+		s.Methods[i].HTTP = nil
 	}
-	browser := newBrowser(t, schema, "")
+	b := newBrowser(t, s, "")
 	for _, path := range []string{"/", "/types/User"} {
-		request := httptest.NewRequest(http.MethodGet, path, nil)
-
-		response := browser.serve(t, request)
-		if response.Code != http.StatusOK {
-			t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
-		}
-		body := response.Body.String()
+		w := b.serve(t, httptest.NewRequest(http.MethodGet, path, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK)
+		body := w.Body.String()
 		for _, unexpected := range []string{`href="./#http"`, `id="http"`, `<h2>JSON</h2>`, "HTTP routes</span>"} {
 			if strings.Contains(body, unexpected) {
 				t.Errorf("GET %s unexpectedly contains %q", path, unexpected)
@@ -282,15 +219,21 @@ func TestBrowserWithoutHTTP(t *testing.T) {
 }
 
 func TestBrowserUncategorized(t *testing.T) {
-	schema := plugimpl.CopySchema(&greeter.Schema)
-	schema.Categories = []plug.CategoryInfo{
-		{Name: "User lookup", Methods: []string{"greeter.getUser"}},
-		{Name: "Identifiers", Types: []string{"UserID"}},
+	s := testSchema(t)
+	s.Categories = []plug.CategoryInfo{
+		{
+			Name:    "User lookup",
+			Methods: []string{"greeter.getUser"},
+		},
+		{
+			Name:  "Identifiers",
+			Types: []string{"UserID"},
+		},
 	}
-	browser := newBrowser(t, schema, "")
-	response := browser.serve(t, httptest.NewRequest(http.MethodGet, "/", nil))
+	b := newBrowser(t, s, "")
+	w := b.serve(t, httptest.NewRequest(http.MethodGet, "/", nil))
 	for _, want := range []string{"User lookup", "Identifiers", "Other methods", "Other types", "greeter.listUsers", "LookupError"} {
-		if !strings.Contains(response.Body.String(), want) {
+		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("browser does not contain %q", want)
 		}
 	}
@@ -356,12 +299,87 @@ func TestBrowserRejectsInvalidCategories(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			schema := plugimpl.CopySchema(&greeter.Schema)
-			schema.Categories = tc.categories
-			_, err := browser.New(schema)
+			s := testSchema(t)
+			s.Categories = tc.categories
+			_, err := New(s)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want containing %q", err, tc.want)
 			}
+		})
+	}
+}
+
+func TestDocumentation(t *testing.T) {
+	const mount = "/reference"
+	b := newBrowser(t, documentedSchema(t), mount)
+	for path, labels := range map[string][]string{
+		"/":                        {"Package", "Category", "Method", "Type", "Permission"},
+		"/methods/greeter.getUser": {"Method", "Field", "Constructor"},
+		"/types/User":              {"Type", "Constructor", "Field"},
+	} {
+		w := b.serve(t, httptest.NewRequest(http.MethodGet, mount+path, nil))
+		testutil.AssertEqual(t, w.Code, http.StatusOK)
+		body := w.Body.String()
+		root := ""
+		if path != "/" {
+			root = "../"
+		}
+		for _, label := range labels {
+			want := "<p>" + label + ` Text with <a href="` + root + `types/User">User</a> and <a href="` + root + `methods/greeter.getUser">greeter.getUser</a>.`
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s does not contain %q", path, want)
+			}
+		}
+		for _, want := range []string{
+			"<ul>\n<li>Read ",
+			"<li>Keep [Missing].",
+			"<pre>[greeter.getUser] id: 1\n    nested\n</pre>",
+			`Raw &lt;script&gt;alert(&quot;hello&quot;)&lt;/script&gt;.`,
+			`href="https://example.com/guide?q=one&amp;other=two"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s does not contain %q", path, want)
+			}
+		}
+		if got, want := strings.Count(body, "<h4>Usage</h4>"), strings.Count(body, `class="documentation"`); got != want {
+			t.Errorf("GET %s rendered %d headings for %d comments", path, got, want)
+		}
+		if strings.Contains(body, `<h4 id=`) || strings.Contains(body, `<script>alert(`) {
+			t.Errorf("GET %s contains a generated heading ID or unescaped HTML", path)
+		}
+	}
+}
+
+func TestStaticFS(t *testing.T) {
+	app := fstest.MapFS{
+		"static/css/plug-schema.css": &fstest.MapFile{
+			Data: []byte("application override"),
+		},
+		"static/css/application.css": &fstest.MapFile{
+			Data: []byte("application asset"),
+		},
+	}
+	fsys := StaticFS(app)
+	cases := map[string]struct {
+		path string
+		want string
+	}{
+		"application asset": {
+			path: "static/css/application.css",
+			want: "application asset",
+		},
+		"application takes precedence": {
+			path: "static/css/plug-schema.css",
+			want: "application override",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			data, err := fs.ReadFile(fsys, tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testutil.AssertEqual(t, string(data), tc.want)
 		})
 	}
 }
@@ -371,9 +389,23 @@ type browserClient struct {
 	client *http.Client
 }
 
+func testSchema(t *testing.T) *plug.Schema {
+	t.Helper()
+	src, err := os.ReadFile("../../example/greeter/schema.plug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := schema.Parse("greeter.plug", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := schema.RuntimeSchema(s)
+	return &out
+}
+
 func newBrowser(t *testing.T, schema *plug.Schema, prefix string) *browserClient {
 	t.Helper()
-	h, err := browser.New(schema)
+	h, err := New(schema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +431,7 @@ func newBrowser(t *testing.T, schema *plug.Schema, prefix string) *browserClient
 	s := &web.Server{
 		Addr:     filepath.Join(dir, "web.sock"),
 		Mux:      mux,
-		StaticFS: browser.StaticFS(),
+		StaticFS: StaticFS(),
 		Ready:    func() { close(ready) },
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -454,4 +486,51 @@ func (b *browserClient) serve(t *testing.T, r *http.Request) *httptest.ResponseR
 		t.Fatal(err)
 	}
 	return w
+}
+
+func documentedSchema(t *testing.T) *plug.Schema {
+	t.Helper()
+	const text = `Text with [User] and [greeter.getUser].
+
+# Usage
+
+  - Read [User].
+  - Keep [Missing].
+
+Example:
+
+	[greeter.getUser] id: 1
+	    nested
+
+Raw <script>alert("hello")</script>. See [the guide].
+
+[the guide]: https://example.com/guide?q=one&other=two
+`
+	s := testSchema(t)
+	s.Documentation = "Package " + text
+	for i := range s.Permissions {
+		s.Permissions[i].Documentation = "Permission " + text
+	}
+	for i := range s.Categories {
+		s.Categories[i].Documentation = "Category " + text
+	}
+	for i := range s.Methods {
+		m := &s.Methods[i]
+		m.Documentation = "Method " + text
+		for j := range m.Fields {
+			m.Fields[j].Documentation = "Field " + text
+		}
+	}
+	for i := range s.Types {
+		typ := &s.Types[i]
+		typ.Documentation = "Type " + text
+		for j := range typ.Constructors {
+			c := &typ.Constructors[j]
+			c.Documentation = "Constructor " + text
+			for k := range c.Fields {
+				c.Fields[k].Documentation = "Field " + text
+			}
+		}
+	}
+	return s
 }

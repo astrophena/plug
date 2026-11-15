@@ -19,30 +19,18 @@ import (
 var update = flag.Bool("update", false, "update documentation golden files")
 
 func TestDocumentation(t *testing.T) {
-	p := NewParser(&plug.Schema{
-		Types: []plug.TypeInfo{
-			{
-				Name: "User",
-			},
-			{
-				Name: "value",
-			},
-		},
-		Methods: []plug.MethodInfo{
-			{
-				Name: "users.get",
-			},
-			{
-				Name: "users.Get",
-			},
-			{
-				Name: "Users.get",
-			},
-			{
-				Name: "Users.Get",
-			},
-		},
-	})
+	var s plug.Schema
+	for _, name := range []string{"User", "value"} {
+		s.Types = append(s.Types, plug.TypeInfo{
+			Name: name,
+		})
+	}
+	for _, name := range []string{"users.get", "users.Get", "Users.get", "Users.Get"} {
+		s.Methods = append(s.Methods, plug.MethodInfo{
+			Name: name,
+		})
+	}
+	p := NewParser(&s)
 	printer := comment.Printer{
 		HeadingID:  func(*comment.Heading) string { return "" },
 		DocLinkURL: func(link *comment.DocLink) string { return "/schema/" + link.Name },
@@ -54,14 +42,16 @@ func TestDocumentation(t *testing.T) {
 		}
 		text := string(ar.Files[0].Data)
 		normalized := Normalize(text)
-		if got := Normalize(normalized); got != normalized {
-			t.Fatalf("normalization is not idempotent:\n%s", got)
-		}
-		var buf bytes.Buffer
+		testutil.AssertEqual(t, Normalize(normalized), normalized)
+
+		var (
+			buf    bytes.Buffer
+			parsed = p.Parse(text)
+		)
 		fmt.Fprintf(&buf, "-- normalized --\n%s\n", normalized)
 		fmt.Fprintf(&buf, "-- generated comment --\n%s\n", p.Comment(text))
-		fmt.Fprintf(&buf, "-- HTML --\n%s", printer.HTML(p.Parse(text)))
-		fmt.Fprintf(&buf, "-- Markdown --\n%s", printer.Markdown(p.Parse(text)))
+		fmt.Fprintf(&buf, "-- HTML --\n%s", printer.HTML(parsed))
+		fmt.Fprintf(&buf, "-- Markdown --\n%s", printer.Markdown(parsed))
 		return buf.Bytes()
 	}, *update)
 }
