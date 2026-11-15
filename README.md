@@ -1,6 +1,9 @@
 # Plug
 
-Yet another RPC protocol nobody needs (probably).
+Yet another RPC protocol nobody needs (*probably*).
+
+Plug defines services in schemas and provides a Go runtime for calling and serving them.
+The schema also describes HTTP routes and can be exported as JSON for other implementations.
 
 <p align="center">
   <img alt="Achtung!" src=".github/achtung.webp" width="200"/>
@@ -9,36 +12,38 @@ Yet another RPC protocol nobody needs (probably).
 > [!WARNING]
 >
 > This is unstable code for personal use, subject to change without notice and
-> may gain or lose functionality at any time. Don't depend on it (or do, I don't
-> care).
+> may gain or lose functionality at any time.
+> Don't depend on it (or do, I don't care).
 
 ## Documentation
 
-Start with [Using Plug](docs/intro.md) to build a service, or
-[Purl and PlugScript](docs/purl.md) to call an existing one.
+- [Using Plug](docs/intro.md): build and call a Go service.
+- [HTTP](docs/http.md): serve JSON routes, generate HTTP clients, or carry native Plug over HTTP.
+- [Purl and PlugScript](docs/purl.md): explore and call a running service.
 
-- [Schema reference](docs/schema.md): types, methods, permissions,
-  compatibility.
-- [HTTP](docs/http.md): JSON routes, generated clients, Upgrade and WebSocket.
-- [Wire protocol](docs/protocol.md): handshakes, frames, value encoding.
-- [Schema JSON export](docs/schema-json.md): resolved metadata for other tools.
-- [Internals](docs/internals.md): notes for changing the runtime and generator.
+References for schemas, tools, and other implementations:
+
+- [Schema specification](docs/schema.md): declarations, documentation, and compatibility.
+- [Wire protocol](docs/protocol.md): schema identity, handshakes, frames, and values.
+- [Schema JSON export](docs/schema-json.md): resolved metadata for clients and generators.
+
+The [Go API](https://pkg.go.dev/go.astrophena.name/plug) documents the runtime.
+Use `plug -help` and `purl -help` for command usage.
 
 ## Tools
 
-Install the standalone commands with Go:
+Install the generator and [Purl](https://go.astrophena.name/plug/cmd/purl):
 
 ```sh
 $ go install go.astrophena.name/plug/cmd/plug@latest
 $ go install go.astrophena.name/plug/cmd/purl@latest
 ```
 
-The [service guide](docs/intro.md) shows how to add the generator to a Go
-module. Run `plug -help` or `purl -help` for command help.
+*Regenerate all bindings whenever you upgrade Plug*.
 
 ## Development
 
-Use the latest version of Go
+Use the latest version of [Go].
 
 Run the tests with:
 
