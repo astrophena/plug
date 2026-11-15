@@ -1,5 +1,5 @@
-// errors exercises generated error fields.
-package errors version 1
+// Tests generated TypeScript clients.
+package typescript version 1
 
 // Text contains an error message.
 type Text = string
@@ -48,3 +48,18 @@ errors.fail -> void throws Problem public http GET "/fail"
 errors.optional -> void throws OptionalError public http GET "/optional"
 // errors.explain returns an error with a string message.
 errors.explain -> void throws TextError public http GET "/text"
+
+// Path is a slash-separated path.
+type Path = string
+
+// wildcard.browse projects a repository and optional path.
+wildcard.browse
+  // repository names a repository.
+  repository: string
+  // path names a path, defaulting to the root.
+  path: Path?
+  // rev selects a revision.
+  rev: string?
+-> void public http GET "/repos/{repository}/contents/{path...}"
+
+typescript.get id: string -> void public http GET "/items/{id}"

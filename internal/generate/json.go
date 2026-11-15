@@ -15,9 +15,9 @@ import (
 	"go.astrophena.name/plug"
 )
 
-// JSON returns a deterministic JSON export of s. See the [schema export format].
+// JSON exports s in the [schema JSON format].
 //
-// [schema export format]: https://github.com/astrophena/plug/tree/master/docs/schema-json.md
+// [schema JSON format]: https://github.com/astrophena/plug/tree/master/docs/schema-json.md
 func JSON(s plug.Schema) ([]byte, error) {
 	document := jsonSchema{
 		FormatVersion:   1,

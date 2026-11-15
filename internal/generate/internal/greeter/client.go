@@ -244,13 +244,14 @@ func (v *User) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Option holds a value that may be absent. Its zero value is None.
+// Option holds an optional value.
+// Its zero value is absent.
 type Option[T any] struct {
 	value T
 	set   bool
 }
 
-// Some returns an Option containing value.
+// Some returns an Option containing v.
 func Some[T any](v T) Option[T] {
 	return Option[T]{value: v, set: true}
 }
@@ -258,7 +259,7 @@ func Some[T any](v T) Option[T] {
 // Value returns the contained value and whether it is present.
 func (o Option[T]) Value() (T, bool) { return o.value, o.set }
 
-// IsZero reports whether the option is absent for encoders that honor Go's zero-value convention.
+// IsZero reports whether the option is absent.
 func (o Option[T]) IsZero() bool { return !o.set }
 
 // MarshalJSON encodes None as null and Some as its contained value.

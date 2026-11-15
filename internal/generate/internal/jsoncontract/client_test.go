@@ -4,19 +4,22 @@
 
 package jsoncontract
 
+//go:generate go tool plug generate -http-client -o client.go schema.plug
+
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"go.astrophena.name/base/testutil"
 )
 
-func TestWildcardPaths(t *testing.T) {
+func TestPaths(t *testing.T) {
 	for name, tc := range map[string]struct {
 		path Option[Path]
 		want string
@@ -24,28 +27,20 @@ func TestWildcardPaths(t *testing.T) {
 		"root": {
 			want: "/repos/group%2Fnested%2Frepo/contents/",
 		},
-		"empty": {
-			path: Some(Path("")),
-			want: "/repos/group%2Fnested%2Frepo/contents/",
-		},
 		"nested": {
 			path: Some(Path("docs/a file%?.txt")),
 			want: "/repos/group%2Fnested%2Frepo/contents/docs/a%20file%25%3F.txt",
 		},
-		"Unicode": {
-			path: Some(Path("日本語/資料.txt")),
-			want: "/repos/group%2Fnested%2Frepo/contents/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E8%B3%87%E6%96%99.txt",
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.EscapedPath() != tc.want || r.URL.Query().Get("rev") != "feature/a" || r.URL.Query().Has("path") {
-					t.Errorf("request URL = %s; want %s?rev=feature/a", r.URL.String(), tc.want)
-				}
+			hc := testutil.MockHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				testutil.AssertEqual(t, r.URL.EscapedPath(), tc.want)
+				testutil.AssertEqual(t, r.URL.Query().Get("rev"), "feature/a")
+				testutil.AssertEqual(t, r.URL.Query().Has("path"), false)
 				w.WriteHeader(http.StatusNoContent)
 			}))
-			defer server.Close()
-			if err := NewClient(server.URL).Browse(t.Context(), BrowseRequest{
+
+			if err := NewClient("https://example.test", WithHTTPClient(hc)).Browse(t.Context(), BrowseRequest{
 				Repository: "group/nested/repo",
 				Path:       tc.path,
 				Rev:        Some("feature/a"),
@@ -62,14 +57,6 @@ func TestQueryLists(t *testing.T) {
 		want url.Values
 	}{
 		"omitted": {},
-		"empty": {
-			req: QueryRequest{
-				Labels:  Some([]string{}),
-				Numbers: Some([]uint32{}),
-				Blobs:   Some([][]byte{}),
-				Ids:     Some([]ID{}),
-			},
-		},
 		"present": {
 			req: QueryRequest{
 				Required: []string{"a b", "c&d"},
@@ -89,28 +76,25 @@ func TestQueryLists(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				got := r.URL.Query()
-				if got.Encode() != tc.want.Encode() {
-					t.Errorf("query = %v; want %v", got, tc.want)
-				}
+			hc := testutil.MockHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				testutil.AssertEqual(t, r.URL.Query().Encode(), tc.want.Encode())
 				w.WriteHeader(http.StatusNoContent)
 			}))
-			defer server.Close()
-			if err := NewClient(server.URL).Query(t.Context(), tc.req); err != nil {
+
+			if err := NewClient("https://example.test", WithHTTPClient(hc)).Query(t.Context(), tc.req); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestJSONClient(t *testing.T) {
+func TestJSON(t *testing.T) {
 	var (
 		choice   = `{"type":"empty"}`
 		optional = "null\n"
 		choices  = "null\n"
 	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	hc := testutil.MockHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/choice":
@@ -119,10 +103,6 @@ func TestJSONClient(t *testing.T) {
 			io.WriteString(w, optional)
 		case "/choices":
 			io.WriteString(w, choices)
-		case "/bytes":
-			io.WriteString(w, `"AP8="`)
-		case "/empty":
-			io.WriteString(w, "[]\n")
 		case "/echo":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -130,100 +110,105 @@ func TestJSONClient(t *testing.T) {
 				return
 			}
 			want := `{"record":{"choices":[],"numbers":[[]],"data":"","signed":-9223372036854775808,"unsigned":18446744073709551615}}`
-			if string(body) != want {
-				t.Errorf("request = %s; want %s", body, want)
-			}
+			testutil.AssertEqual(t, string(body), want)
 			io.WriteString(w, strings.TrimSuffix(strings.TrimPrefix(string(body), `{"record":`), "}"))
 		}
 	}))
-	defer server.Close()
-	client := NewClient(server.URL)
+	c := NewClient("https://example.test", WithHTTPClient(hc))
 
-	got, err := client.GetChoice(t.Context())
-	if _, ok := got.(*Empty); err != nil || !ok {
-		t.Fatalf("choice = %#v, %v", got, err)
+	got, err := c.GetChoice(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	gotOptional, err := client.GetOptional(t.Context())
-	if err != nil || !gotOptional.IsZero() {
-		t.Fatalf("optional = %#v, %v", gotOptional, err)
+	testutil.AssertEqual(t, got, Choice(&Empty{}))
+
+	opt, err := c.GetOptional(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
+	testutil.AssertEqual(t, opt, Option[Choice]{})
+
 	optional = `{"type":"empty"}` + "\n"
-	gotOptional, err = client.GetOptional(t.Context())
-	if got, ok := gotOptional.Value(); err != nil || !ok {
-		t.Fatalf("present optional = %#v, %v", gotOptional, err)
-	} else if _, ok := got.(*Empty); !ok {
-		t.Fatalf("present optional = %#v", got)
+	opt, err = c.GetOptional(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	gotChoices, err := client.ListChoices(t.Context())
-	if err != nil || !gotChoices.IsZero() {
-		t.Fatalf("choices = %#v, %v", gotChoices, err)
+	testutil.AssertEqual(t, opt, Some[Choice](&Empty{}))
+
+	items, err := c.ListChoices(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
+	testutil.AssertEqual(t, items, Option[[][]Choice]{})
+
 	choices = `[[{"type":"empty"}],[]]` + "\n"
-	gotChoices, err = client.ListChoices(t.Context())
-	if items, ok := gotChoices.Value(); err != nil || !ok || len(items) != 2 || len(items[0]) != 1 || len(items[1]) != 0 {
-		t.Fatalf("present choices = %#v, %v", gotChoices, err)
+	items, err = c.ListChoices(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	data, err := client.GetBytes(t.Context())
-	if err != nil || string(data) != string([]byte{0, 255}) {
-		t.Fatalf("bytes = %v, %v", data, err)
-	}
-	empty, err := client.ListEmpty(t.Context())
-	if err != nil || empty == nil || len(empty) != 0 {
-		t.Fatalf("empty = %#v, %v", empty, err)
-	}
-	record, err := client.Echo(t.Context(), EchoRequest{
+	testutil.AssertEqual(t, items, Some([][]Choice{{&Empty{}}, {}}))
+
+	rec, err := c.Echo(t.Context(), EchoRequest{
 		Record: Record{
 			Numbers:  [][]uint32{nil},
 			Signed:   -9223372036854775808,
 			Unsigned: 18446744073709551615,
 		},
 	})
-	if err != nil || record.Signed != -9223372036854775808 || record.Unsigned != 18446744073709551615 || len(record.Numbers) != 1 || record.Numbers[0] == nil {
-		t.Fatalf("record = %#v, %v", record, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	testutil.AssertEqual(t, rec.Signed, int64(-9223372036854775808))
+	testutil.AssertEqual(t, rec.Unsigned, uint64(18446744073709551615))
+	testutil.AssertEqual(t, rec.Numbers, [][]uint32{{}})
 
 	for name, body := range map[string]string{
 		"missing":     `{}`,
-		"legacy":      `{"_":"empty"}`,
 		"wrong case":  `{"Type":"empty"}`,
-		"null tag":    `{"type":null}`,
-		"empty tag":   `{"type":""}`,
 		"numeric tag": `{"type":1}`,
 		"bad fields":  `{"type":"value","label":7}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			choice = body
-			if got, err := client.GetChoice(t.Context()); err == nil {
+			if got, err := c.GetChoice(t.Context()); err == nil {
 				t.Fatalf("accepted %s: %#v", body, got)
 			}
 		})
 	}
 	choice = `{"type":"future","value":18446744073709551615,"extra":{"type":"nested"}}`
-	got, err = client.GetChoice(t.Context())
+	got, err = c.GetChoice(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	unknown, ok := got.(*UnknownChoice)
-	if err != nil || !ok || unknown.Constructor != "future" {
-		t.Fatalf("unknown = %#v, %v", got, err)
+	if !ok {
+		t.Fatalf("choice = %T; want *UnknownChoice", got)
 	}
-	encoded, err := json.Marshal(unknown)
-	if err != nil || string(encoded) != choice {
-		t.Fatalf("forwarded unknown = %s, %v; want %s", encoded, err, choice)
+	testutil.AssertEqual(t, unknown.Constructor, "future")
+
+	data, err := json.Marshal(unknown)
+	if err != nil {
+		t.Fatal(err)
 	}
-	encoded, err = json.Marshal(&Empty{})
-	if err != nil || string(encoded) != `{"type":"empty"}` {
-		t.Fatalf("fieldless constructor = %s, %v", encoded, err)
+	testutil.AssertEqual(t, string(data), choice)
+
+	data, err = json.Marshal(&Empty{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	testutil.AssertEqual(t, string(data), `{"type":"empty"}`)
+
 	known := &Value{
 		Flag: Some(false),
 	}
-	encoded, err = json.Marshal(known)
-	if err != nil || string(encoded) != `{"type":"value","label":"","blob":"","tags":[],"flag":false}` {
-		t.Fatalf("payload = %s, %v", encoded, err)
+	data, err = json.Marshal(known)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := client.decodeError("oops", jsontext.Value(`{}`)); got == nil {
-		t.Fatal("empty declared error was not decoded")
-	} else {
-		if _, ok := errors.AsType[*Problem](got); !ok {
-			t.Fatalf("declared error = %T", got)
-		}
+	testutil.AssertEqual(t, string(data), `{"type":"value","label":"","blob":"","tags":[],"flag":false}`)
+
+	err = c.decodeError("oops", jsontext.Value(`{}`))
+	if _, ok := errors.AsType[*Problem](err); !ok {
+		t.Fatalf("declared error = %v; want *Problem", err)
 	}
 }

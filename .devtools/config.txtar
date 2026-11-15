@@ -3,8 +3,8 @@
   "example/greeter/greeter_plug.go",
   "internal/rawtest/rawtest_plug.go",
   "internal/browser/browser_templ.go",
-  "internal/generate/internal/**/client.go",
-  "internal/generate/testdata/*.go.golden"
+  "internal/generate/internal/fields/bindings.go",
+  "internal/generate/internal/**/client.go"
 ]
 -- copyright/template.templ --
 // © %d Ilya Mateyko. All rights reserved.

@@ -23,7 +23,7 @@ func runGenerate(args []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
-		out        = fs.String("o", "", "generated Go, TypeScript, or JSON output path")
+		out        = fs.String("o", "", "generated Go, TypeScript, or JSON output `path`")
 		check      = fs.Bool("check", false, "check that output is up-to-date without writing")
 		httpClient = fs.Bool("http-client", false, "generate Go HTTP client (standard library only)")
 		ts         = fs.Bool("ts", false, "generate TypeScript types and HTTP client")

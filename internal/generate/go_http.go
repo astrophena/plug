@@ -13,8 +13,7 @@ import (
 	"go.astrophena.name/plug/internal/names"
 )
 
-// GoHTTPClient returns deterministic Go HTTP client bindings using only the
-// standard library.
+// GoHTTPClient returns HTTP client bindings that use only the standard library.
 func GoHTTPClient(s plug.Schema) ([]byte, error) {
 	m := newModel(s)
 	m.useHTTPMethods()
@@ -65,14 +64,15 @@ func (g *goHTTPGenerator) writeImports() {
 }
 
 func (g *goHTTPGenerator) writeOption() {
-	g.line("// Option holds a value that may be absent. Its zero value is None.")
+	g.line("// Option holds an optional value.")
+	g.line("// Its zero value is absent.")
 	g.line("type Option[T any] struct {")
 	g.line("\tvalue T")
 	g.line("\tset   bool")
 	g.line("}")
 	g.line("")
 
-	g.line("// Some returns an Option containing value.")
+	g.line("// Some returns an Option containing v.")
 	g.line("func Some[T any](v T) Option[T] {")
 	g.line("\treturn Option[T]{value: v, set: true}")
 	g.line("}")
@@ -82,7 +82,7 @@ func (g *goHTTPGenerator) writeOption() {
 	g.line("func (o Option[T]) Value() (T, bool) { return o.value, o.set }")
 	g.line("")
 
-	g.line("// IsZero reports whether the option is absent for encoders that honor Go's zero-value convention.")
+	g.line("// IsZero reports whether the option is absent.")
 	g.line("func (o Option[T]) IsZero() bool { return !o.set }")
 	g.line("")
 

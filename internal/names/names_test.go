@@ -4,7 +4,11 @@
 
 package names
 
-import "testing"
+import (
+	"testing"
+
+	"go.astrophena.name/base/testutil"
+)
 
 func TestTypeScriptMethod(t *testing.T) {
 	cases := map[string]struct {
@@ -39,10 +43,7 @@ func TestTypeScriptMethod(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := TypeScriptMethod(tc.in)
-			if got != tc.want {
-				t.Fatalf("TypeScriptMethod(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			testutil.AssertEqual(t, TypeScriptMethod(tc.in), tc.want)
 		})
 	}
 }

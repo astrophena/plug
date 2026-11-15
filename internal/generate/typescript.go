@@ -14,7 +14,7 @@ import (
 	"go.astrophena.name/plug/internal/names"
 )
 
-// TypeScript returns deterministic TypeScript types and an HTTP client for s.
+// TypeScript returns types and an HTTP client for s.
 func TypeScript(s plug.Schema) ([]byte, error) {
 	m := newModel(s)
 	m.useHTTPMethods()

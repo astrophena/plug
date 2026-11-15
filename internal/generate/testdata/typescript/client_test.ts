@@ -56,3 +56,48 @@ Deno.test("string messages keep the generated error behavior", () => {
     throw new Error("optional schema message replaced Error.message");
   }
 });
+
+Deno.test("schema text stays literal", async () => {
+  let url = "";
+  const client = new Client("https://example.test", {
+    fetch: (input) => {
+      url = String(input);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    },
+  });
+  await client.get({ id: "a/b" });
+  const want = "https://example.test/`+(globalThis.literalExecuted=true)+`/${text}/\\/a%2Fb";
+  if (url !== want) throw new Error(`URL: ${url}; want ${want}`);
+  if ("literalExecuted" in globalThis) throw new Error("path executed");
+});
+
+Deno.test("wildcard paths", async () => {
+  for (
+    const [path, want] of [
+      [undefined, ""],
+      ["", ""],
+      ["docs/a file%?.txt", "docs/a%20file%25%3F.txt"],
+      ["日本語/資料.txt", "%E6%97%A5%E6%9C%AC%E8%AA%9E/%E8%B3%87%E6%96%99.txt"],
+    ]
+  ) {
+    const client = new Client("https://example.test", {
+      fetch: (input) => {
+        const url = new URL(String(input));
+        const expected = "/repos/group%2Fnested%2Frepo/contents/" + want;
+        if (
+          url.pathname !== expected ||
+          url.searchParams.get("rev") !== "feature/a" ||
+          url.searchParams.has("path")
+        ) {
+          throw new Error(`unexpected URL: ${url}`);
+        }
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    });
+    await client.browse({
+      repository: "group/nested/repo",
+      path,
+      rev: "feature/a",
+    });
+  }
+});

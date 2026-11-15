@@ -1,0 +1,11 @@
+package fields version 1
+
+type Choice
+one label:string = Choice
+two = Choice
+
+type Problem
+missing code:u32 = Problem httpStatus 404
+failed = Problem
+
+fields.echo id:u32 data:list<list<Choice>>? -> void throws Problem public http POST "/echo/{id}"
