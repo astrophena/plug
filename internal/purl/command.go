@@ -21,7 +21,8 @@ import (
 	"golang.org/x/term"
 )
 
-// Command runs the purl RPC shell. Its zero value is ready to use.
+// Command runs the purl RPC shell.
+// Its zero value is ready to use.
 type Command struct {
 	expr      string
 	hasExpr   bool
@@ -55,7 +56,8 @@ func (c *Command) Flags(fs *flag.FlagSet) {
 	})
 }
 
-// Run evaluates input against the endpoint. Script errors stop execution;
+// Run evaluates input against the endpoint.
+// Script errors stop execution;
 // REPL errors leave the session open.
 func (c *Command) Run(ctx context.Context) (err error) {
 	defer func() {

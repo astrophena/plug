@@ -38,18 +38,24 @@ func (s *session) known(env *scope, x expr, depth int) value {
 		for _, f := range s.knownFields(v) {
 			if f.Name == n.name {
 				t := f.Type
-				return value{typ: &t}
+				return value{
+					typ: &t,
+				}
 			}
 		}
 	case indexExpr:
 		v := s.known(env, n.x, depth+1)
 		if v.typ != nil && v.typ.Kind == plug.TypeExprList {
-			return value{typ: v.typ.Element}
+			return value{
+				typ: v.typ.Element,
+			}
 		}
 	case callExpr:
 		v := s.known(env, n.fn, depth+1)
 		if fn, ok := v.data.(*function); ok {
-			return value{typ: fn.response}
+			return value{
+				typ: fn.response,
+			}
 		}
 	case lambdaExpr:
 		return value{

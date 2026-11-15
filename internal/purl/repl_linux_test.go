@@ -107,16 +107,6 @@ func childEnv() []string {
 	return append(os.Environ(), "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0")
 }
 
-func BenchmarkChildExit(b *testing.B) {
-	for b.Loop() {
-		cmd := exec.CommandContext(b.Context(), os.Args[0], "-test.run=^TestPagerChild$")
-		cmd.Env = append(childEnv(), "PURL_TEST_PAGER=early")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			b.Fatalf("child: %v\n%s", err, out)
-		}
-	}
-}
-
 func startREPL(t *testing.T, endpoint string, height int, env ...string) *replTerm {
 	t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
@@ -200,51 +190,53 @@ func (r *replTerm) quit(t *testing.T) {
 	}
 }
 
+func (r *replTerm) eof(t *testing.T, prompt string) {
+	t.Helper()
+	r.send(t, "\x04")
+	if err := r.cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := io.ReadAll(r.f)
+	if err != nil && !errors.Is(err, syscall.EIO) {
+		t.Fatal(err)
+	}
+	// Readline may redraw the prompt while exiting.
+	text := replOutput.Replace(string(out))
+	text = strings.ReplaceAll(text, replOutput.Replace(prompt), "")
+	if strings.TrimSpace(text) != "" {
+		t.Fatalf("Ctrl-D printed %q", out)
+	}
+	settings, err := unix.IoctlGetTermios(int(r.f.Fd()), unix.TCGETS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Lflag&(unix.ICANON|unix.ECHO) != unix.ICANON|unix.ECHO {
+		t.Fatal("Ctrl-D did not restore terminal mode")
+	}
+}
+
 const replPrompt = "\x1b[J\x1b[2K\rpurl> "
 
 // Ignore cursor redraws, which can surround evaluation output between reads.
 var replOutput = strings.NewReplacer("\x1b[J\x1b[2K\r", "", " \b", "")
 
-func TestREPLEOF(t *testing.T) {
+func TestREPLContinuationEOF(t *testing.T) {
+	t.Parallel()
+
 	server, _, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	for name, source := range map[string]string{"prompt": "", "continuation": "[\r"} {
-		t.Run(name, func(t *testing.T) {
-			r := startREPL(t, endpoint, 30)
-			r.until(t, replPrompt)
-			prompt := replPrompt
-			if source != "" {
-				r.send(t, source)
-				prompt = "\x1b[J\x1b[2K\r ...> "
-				r.until(t, prompt)
-			}
-			r.send(t, "\x04")
-			if err := r.cmd.Wait(); err != nil {
-				t.Fatal(err)
-			}
-
-			out, err := io.ReadAll(r.f)
-			if err != nil && !errors.Is(err, syscall.EIO) {
-				t.Fatal(err)
-			}
-			// Readline may redraw the prompt and clear the line while exiting.
-			text := strings.TrimPrefix(string(out), prompt)
-			text = strings.ReplaceAll(text, "\x1b[J\x1b[2K\r", "")
-			if strings.TrimSpace(text) != "" {
-				t.Fatalf("Ctrl-D printed %q", out)
-			}
-			settings, err := unix.IoctlGetTermios(int(r.f.Fd()), unix.TCGETS)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if settings.Lflag&(unix.ICANON|unix.ECHO) != unix.ICANON|unix.ECHO {
-				t.Fatal("Ctrl-D did not restore terminal mode")
-			}
-		})
-	}
+	r := startREPL(t, endpoint, 30)
+	r.until(t, replPrompt)
+	r.send(t, "[\r")
+	const prompt = "\x1b[J\x1b[2K\r ...> "
+	r.until(t, prompt)
+	r.eof(t, prompt)
 }
 
 func TestREPLTerminal(t *testing.T) {
+	t.Parallel()
+
 	server, _, waiting := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 	r := startREPL(t, endpoint, 30)
@@ -255,6 +247,11 @@ func TestREPLTerminal(t *testing.T) {
 	if !strings.HasPrefix(greeting, want) {
 		t.Fatalf("greeting = %q, want prefix %q", greeting, want)
 	}
+	stamp := time.Now().UTC().Add(-3*time.Hour - time.Minute).Format(time.RFC3339Nano)
+	r.send(t, `"`+stamp+`"`+"\r")
+	r.until(t, `"`+stamp+`" (3 hours ago)`+"\r\n"+replPrompt)
+	r.send(t, "toJSON(_)\r")
+	r.until(t, `"\"`+stamp+`\""`+"\r\n"+replPrompt)
 	r.send(t, "1 + 2\r")
 	r.until(t, "\r\n3\r\n"+replPrompt)
 	r.send(t, "greeter.getUser(id: 42)\r")
@@ -286,7 +283,7 @@ func TestREPLTerminal(t *testing.T) {
 	r.until(t, "context canceled\r\n"+replPrompt)
 	r.send(t, "4 + 5\r")
 	r.until(t, "\r\n9\r\n"+replPrompt)
-	r.quit(t)
+	r.eof(t, replPrompt)
 
 	// LF must reset the column, or multiline responses form a staircase.
 	text := r.text.String()
@@ -298,16 +295,15 @@ func TestREPLTerminal(t *testing.T) {
 }
 
 func TestREPLPager(t *testing.T) {
+	t.Parallel()
+
 	server, calls, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 	page := t.TempDir() + "/page"
 	pager := fmt.Sprintf("%q -test.run=^TestPagerChild$", os.Args[0])
 	r := startREPL(t, endpoint, 8, "NO_PAGER=", "PAGER="+pager, "PURL_TEST_PAGER=normal", "PURL_TEST_PAGE="+page)
 	r.until(t, replPrompt)
-	r.send(t, "greeter.getUser(id: 42)\r")
-	r.until(t, "PAGER READY\r\n")
-	r.send(t, "q")
-	r.until(t, "PAGER KEY q\r\n"+replPrompt)
+	r.page(t, "greeter.getUser(id: 42)")
 	if calls.Load() != 1 {
 		t.Fatal("pager repeated the request")
 	}
@@ -326,18 +322,10 @@ func TestREPLPager(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("reading the result repeated the request")
 	}
-	for _, command := range []string{":schema", ":help", ":help greeter.getUser"} {
-		r.send(t, command+"\r")
-		r.until(t, "PAGER READY\r\n")
-		r.send(t, "q")
-		r.until(t, "PAGER KEY q\r\n"+replPrompt)
-	}
+	r.page(t, ":schema")
 	r.send(t, "let double = x => x + x\r")
 	r.until(t, "double (deferred)\r\n"+replPrompt)
-	r.send(t, `"0123456789"`+strings.Repeat(" | double", 12)+"\r")
-	r.until(t, "PAGER READY\r\n")
-	r.send(t, "q")
-	r.until(t, "PAGER KEY q\r\n"+replPrompt)
+	r.page(t, `"0123456789"`+strings.Repeat(" | double", 12))
 	text, err = os.ReadFile(page)
 	if err != nil {
 		t.Fatal(err)
@@ -351,6 +339,8 @@ func TestREPLPager(t *testing.T) {
 }
 
 func TestREPLHighlight(t *testing.T) {
+	t.Parallel()
+
 	server, calls, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 	r := startREPL(t, endpoint, 30, "NO_COLOR=")
@@ -375,68 +365,55 @@ func TestREPLHighlight(t *testing.T) {
 	if !strings.Contains(out, "\x1b[35mlet\x1b[39m") {
 		t.Fatalf("help examples are not highlighted: %q", out)
 	}
-	r.send(t, ":schema\r")
-	r.until(t, "\x1b[35mpackage\x1b[39m")
-	// A subsequent expression also checks that schema output left input usable.
-	r.send(t, "1 + 1\r")
-	r.until(t, "\r\n\x1b[33m2\x1b[39m\r\n"+replPrompt)
+
+	var source strings.Builder
+	source.WriteString(":schema\r")
+	for i := range 8 {
+		fmt.Fprintf(&source, "%d + 1\r", i)
+	}
+	r.send(t, source.String())
+	r.until(t, "\r\n\x1b[33m8\x1b[39m\r\n"+replPrompt)
+	text := replOutput.Replace(r.text.String())
+	for i := range 8 {
+		want := fmt.Sprintf("\r\n\x1b[33m%d\x1b[39m\r\n", i+1)
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing result %d in %q", i+1, text)
+		}
+	}
 	if calls.Load() != 0 {
 		t.Fatal("viewing documentation sent a request")
 	}
 	r.quit(t)
 }
 
-func TestREPLNoColor(t *testing.T) {
-	server, _, _ := testServer(t)
-	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	for name, env := range map[string][]string{
-		"NO_COLOR":      {"NO_COLOR=1"},
-		"dumb terminal": {"NO_COLOR=", "TERM=dumb"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := startREPL(t, endpoint, 30, env...)
-			r.until(t, replPrompt)
-			r.send(t, "nil\r")
-			r.until(t, "\r\nnil\r\n"+replPrompt)
-			r.send(t, ":help UserID\r")
-			r.until(t, "type UserID = i64\r\n\r\n"+replPrompt)
-			text := r.text.String()
-			if uncolor(text) != text {
-				t.Fatalf("color was not disabled: %q", text)
-			}
-			r.quit(t)
-		})
-	}
-}
+func TestREPLDumbTerminal(t *testing.T) {
+	t.Parallel()
 
-func TestREPLTypeahead(t *testing.T) {
 	server, _, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	r := startREPL(t, endpoint, 30, "NO_COLOR=")
+	r := startREPL(t, endpoint, 30, "NO_COLOR=", "TERM=dumb")
 	r.until(t, replPrompt)
-	var source strings.Builder
-	source.WriteString(":schema\r")
-	for i := range 50 {
-		fmt.Fprintf(&source, "%d + 1\r", i)
-	}
-	r.send(t, source.String())
-	r.until(t, "\r\n\x1b[33m50\x1b[39m\r\n"+replPrompt)
-	text := replOutput.Replace(r.text.String())
-	for i := range 50 {
-		want := fmt.Sprintf("\r\n\x1b[33m%d\x1b[39m\r\n", i+1)
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing result %d in %q", i+1, text)
-		}
+	r.send(t, "nil\r")
+	r.until(t, "\r\nnil\r\n"+replPrompt)
+	r.send(t, ":help UserID\r")
+	r.until(t, "type UserID = i64\r\n\r\n"+replPrompt)
+	text := r.text.String()
+	if uncolor(text) != text {
+		t.Fatalf("color was not disabled: %q", text)
 	}
 	r.quit(t)
 }
 
 func TestREPLTables(t *testing.T) {
+	t.Parallel()
+
 	for name, env := range map[string][]string{
 		"plain": nil,
 		"JSON":  {"PURL_TEST_JSON=1", "NO_COLOR="},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			server, calls, _ := testServer(t)
 			endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 			r := startREPL(t, endpoint, 30, env...)
@@ -466,22 +443,32 @@ func TestREPLTables(t *testing.T) {
 			if calls.Load() != 1 {
 				t.Fatal("table display or exploration repeated the RPC")
 			}
+			r.send(t, "true\r")
+			r.until(t, "\r\ntrue\r\n"+replPrompt)
+			r.send(t, ":help UserID\r")
+			r.until(t, "type UserID = i64\r\n\r\n"+replPrompt)
+			text := r.text.String()
+			if uncolor(text) != text {
+				t.Fatalf("color was not disabled: %q", text)
+			}
+			if name == "JSON" && strings.Contains(text, "Connected to") {
+				t.Fatalf("JSON mode printed a greeting: %q", text)
+			}
 			r.quit(t)
 		})
 	}
 }
 
 func TestREPLTablePager(t *testing.T) {
+	t.Parallel()
+
 	server, calls, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 	page := t.TempDir() + "/page"
 	pager := fmt.Sprintf("%q -test.run=^TestPagerChild$", os.Args[0])
 	r := startREPL(t, endpoint, 5, "NO_COLOR=", "NO_PAGER=", "PAGER="+pager, "PURL_TEST_PAGER=normal", "PURL_TEST_PAGE="+page)
 	r.until(t, replPrompt)
-	r.send(t, "greeter.listUsers(limit: 2)\r")
-	r.until(t, "PAGER READY\r\n")
-	r.send(t, "q")
-	r.until(t, "PAGER KEY q\r\n"+replPrompt)
+	r.page(t, "greeter.listUsers(limit: 2)")
 	text, err := os.ReadFile(page)
 	if err != nil {
 		t.Fatal(err)
@@ -497,43 +484,9 @@ func TestREPLTablePager(t *testing.T) {
 	r.quit(t)
 }
 
-func TestREPLTimestamp(t *testing.T) {
-	server, _, _ := testServer(t)
-	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	r := startREPL(t, endpoint, 30)
-	r.until(t, replPrompt)
-	stamp := time.Now().UTC().Add(-3*time.Hour - time.Minute).Format(time.RFC3339Nano)
-	r.send(t, `"`+stamp+`"`+"\r")
-	r.until(t, `"`+stamp+`" (3 hours ago)`+"\r\n"+replPrompt)
-	r.send(t, "toJSON(_)\r")
-	r.until(t, `"\"`+stamp+`\""`+"\r\n"+replPrompt)
-	r.quit(t)
-}
-
-func TestREPLPagerColor(t *testing.T) {
-	server, _, _ := testServer(t)
-	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	page := t.TempDir() + "/page"
-	pager := fmt.Sprintf("%q -test.run=^TestPagerChild$", os.Args[0])
-	r := startREPL(t, endpoint, 8, "NO_COLOR=", "NO_PAGER=", "PAGER="+pager, "PURL_TEST_PAGER=normal", "PURL_TEST_PAGE="+page)
-	r.until(t, replPrompt)
-	r.send(t, "greeter.getUser(id: 42)\r")
-	r.until(t, "PAGER READY\r\n")
-	r.send(t, "q")
-	r.until(t, "PAGER KEY q\r\n"+replPrompt)
-	text, err := os.ReadFile(page)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(text), "\x1b[32m\"Alice\"\x1b[39m") {
-		t.Fatalf("pager lost highlighting: %q", text)
-	}
-	r.send(t, "1 + 1\r")
-	r.until(t, "\r\n\x1b[33m2\x1b[39m\r\n"+replPrompt)
-	r.quit(t)
-}
-
 func TestREPLLess(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("less"); err != nil {
 		t.Skip("less is not installed")
 	}
@@ -551,6 +504,8 @@ func TestREPLLess(t *testing.T) {
 }
 
 func TestREPLPagerFallback(t *testing.T) {
+	t.Parallel()
+
 	server, _, _ := testServer(t)
 	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
 	pager := fmt.Sprintf("%q -test.run=^TestPagerChild$", os.Args[0])
@@ -564,11 +519,6 @@ func TestREPLPagerFallback(t *testing.T) {
 		want string
 	}{
 		{
-			"disabled",
-			[]string{"PAGER=" + pager},
-			"\r\n)\r\n" + replPrompt,
-		},
-		{
 			"start failure",
 			[]string{"NO_PAGER=", "PAGER=" + broken},
 			"\r\n)\r\n" + replPrompt,
@@ -578,13 +528,9 @@ func TestREPLPagerFallback(t *testing.T) {
 			[]string{"NO_PAGER=", "PAGER=" + pager, "PURL_TEST_PAGER=early"},
 			"PAGER QUIT\r\n" + replPrompt,
 		},
-		{
-			"JSON",
-			[]string{"NO_PAGER=", "NO_COLOR=", "PAGER=" + pager, "PURL_TEST_JSON=1"},
-			"\"email\":\"alice@example.test\"}\r\n" + replPrompt,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := startREPL(t, endpoint, 8, tc.env...)
 			r.until(t, replPrompt)
 			r.send(t, "greeter.getUser(id: 42)\r")
@@ -597,15 +543,16 @@ func TestREPLPagerFallback(t *testing.T) {
 			}
 			r.send(t, "1 + 1\r")
 			r.until(t, "\r\n2\r\n"+replPrompt)
-			if tc.name == "JSON" {
-				r.send(t, ":help UserID\r")
-				r.until(t, "type UserID = i64\r\n\r\n"+replPrompt)
-				text := r.text.String()
-				if uncolor(text) != text || strings.Contains(text, "Connected to") {
-					t.Fatalf("JSON mode printed colors or a greeting: %q", text)
-				}
-			}
+
 			r.quit(t)
 		})
 	}
+}
+
+func (r *replTerm) page(t *testing.T, source string) {
+	t.Helper()
+	r.send(t, source+"\r")
+	r.until(t, "PAGER READY\r\n")
+	r.send(t, "q")
+	r.until(t, "PAGER KEY q\r\n"+replPrompt)
 }

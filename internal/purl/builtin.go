@@ -85,7 +85,9 @@ func builtins() map[string]*function {
 			if !textOK || !partOK {
 				return value{}, fmt.Errorf("%s: expected two strings", name)
 			}
-			return value{data: match.test(text, part)}, nil
+			return value{
+				data: match.test(text, part),
+			}, nil
 		})
 	}
 
@@ -161,7 +163,9 @@ func builtins() map[string]*function {
 		if !ok || n.Sign() < 0 || !n.IsInt64() {
 			return value{}, fmt.Errorf("take: expected a nonnegative integer")
 		}
-		return value{data: xs[:min(int64(len(xs)), n.Int64())]}, nil
+		return value{
+			data: xs[:min(int64(len(xs)), n.Int64())],
+		}, nil
 	})
 
 	add("count", []string{"items"}, "Count items, fields, bytes, or Unicode characters.", func(ctx context.Context, args []value) (value, error) {
@@ -185,9 +189,13 @@ func builtins() map[string]*function {
 		}
 		out := make([]value, 0, len(r.fields))
 		for _, f := range r.fields {
-			out = append(out, value{data: f.name})
+			out = append(out, value{
+				data: f.name,
+			})
 		}
-		return value{data: out}, nil
+		return value{
+			data: out,
+		}, nil
 	})
 
 	add("parseJSON", []string{"text"}, "Parse JSON without losing integer precision.", func(ctx context.Context, args []value) (value, error) {
@@ -209,7 +217,9 @@ func builtins() map[string]*function {
 
 	add("toJSON", []string{"value"}, "Encode a value as JSON.", func(ctx context.Context, args []value) (value, error) {
 		text, err := marshalJSON(args[0])
-		return value{data: text}, err
+		return value{
+			data: text,
+		}, err
 	})
 
 	add("bytes", []string{"text"}, "Encode a string as UTF-8 bytes.", func(ctx context.Context, args []value) (value, error) {
@@ -217,7 +227,9 @@ func builtins() map[string]*function {
 		if !ok {
 			return value{}, fmt.Errorf("bytes: expected a string")
 		}
-		return value{data: []byte(text)}, nil
+		return value{
+			data: []byte(text),
+		}, nil
 	})
 
 	add("text", []string{"bytes"}, "Decode UTF-8 bytes into a string.", func(ctx context.Context, args []value) (value, error) {
@@ -225,7 +237,9 @@ func builtins() map[string]*function {
 		if !ok || !utf8.Valid(b) {
 			return value{}, fmt.Errorf("text: expected UTF-8 bytes")
 		}
-		return value{data: string(b)}, nil
+		return value{
+			data: string(b),
+		}, nil
 	})
 
 	return funcs
@@ -268,9 +282,13 @@ func walkList(ctx context.Context, name string, xs []value, fn *function) (value
 	case "find":
 		return value{}, nil
 	case "any", "all":
-		return value{data: name == "all"}, nil
+		return value{
+			data: name == "all",
+		}, nil
 	default:
-		return value{data: out}, nil
+		return value{
+			data: out,
+		}, nil
 	}
 }
 
@@ -307,7 +325,9 @@ func sortList(ctx context.Context, xs []value, fn *function) (value, error) {
 	for _, i := range order {
 		out = append(out, xs[i])
 	}
-	return value{data: out}, nil
+	return value{
+		data: out,
+	}, nil
 }
 
 func groupList(ctx context.Context, name string, xs []value, fn *function) (value, error) {
@@ -398,7 +418,9 @@ func groupList(ctx context.Context, name string, xs []value, fn *function) (valu
 	}
 
 	if !group {
-		return value{data: out}, nil
+		return value{
+			data: out,
+		}, nil
 	}
 
 	out = make([]value, 0, len(keys))
@@ -411,14 +433,18 @@ func groupList(ctx context.Context, name string, xs []value, fn *function) (valu
 						value: key,
 					},
 					{
-						name:  "items",
-						value: value{data: groups[i]},
+						name: "items",
+						value: value{
+							data: groups[i],
+						},
 					},
 				},
 			},
 		})
 	}
-	return value{data: out}, nil
+	return value{
+		data: out,
+	}, nil
 }
 
 type numKey string
@@ -459,11 +485,15 @@ func readJSON(d *json.Decoder, depth int) (value, error) {
 	switch t := t.(type) {
 	case json.Number:
 		if z, ok := new(big.Int).SetString(string(t), 10); ok {
-			return value{data: z}, nil
+			return value{
+				data: z,
+			}, nil
 		}
 
 		f, err := strconv.ParseFloat(string(t), 64)
-		return value{data: f}, err
+		return value{
+			data: f,
+		}, err
 	case json.Delim:
 		if t == '[' {
 			xs := make([]value, 0)
@@ -475,7 +505,9 @@ func readJSON(d *json.Decoder, depth int) (value, error) {
 				xs = append(xs, v)
 			}
 			_, err := d.Token()
-			return value{data: xs}, err
+			return value{
+				data: xs,
+			}, err
 		}
 
 		if t == '{' {
@@ -502,11 +534,15 @@ func readJSON(d *json.Decoder, depth int) (value, error) {
 			}
 
 			_, err := d.Token()
-			return value{data: r}, err
+			return value{
+				data: r,
+			}, err
 		}
 		return value{}, fmt.Errorf("unexpected JSON delimiter %q", t)
 	default:
-		return value{data: t}, nil
+		return value{
+			data: t,
+		}, nil
 	}
 }
 

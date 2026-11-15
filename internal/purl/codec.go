@@ -17,7 +17,9 @@ import (
 func (s *session) coerce(v value, t plug.TypeExpr) (value, error) {
 	if t.Optional {
 		if v.data == nil {
-			return value{typ: &t}, nil
+			return value{
+				typ: &t,
+			}, nil
 		}
 		inner := t
 		inner.Optional = false
@@ -198,7 +200,9 @@ func (s *session) codec(t plug.TypeExpr) plugimpl.Codec[value] {
 				if !plugimpl.Reserve[[]value](d, 1) {
 					return value{}
 				}
-				return value{data: list.Decode(d)}
+				return value{
+					data: list.Decode(d),
+				}
 			},
 		}
 	case t.Kind == plug.TypeExprNamed:
@@ -381,7 +385,9 @@ func (s *session) fieldsCodec(fields []plug.FieldInfo) plugimpl.Codec[value] {
 					return value{}
 				}
 			}
-			return value{data: r}
+			return value{
+				data: r,
+			}
 		},
 	}
 }

@@ -28,8 +28,10 @@ func TestFormatEscapesTerminalControls(t *testing.T) {
 	}
 }
 
+var colorCodes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func uncolor(text string) string {
-	return regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(text, "")
+	return colorCodes.ReplaceAllString(text, "")
 }
 
 func TestHighlight(t *testing.T) {
@@ -188,5 +190,32 @@ func TestDisplayLimitDoesNotTruncateJSON(t *testing.T) {
 	}
 	if !strings.Contains(full, strings.Repeat("é", 100)) || strings.Contains(full, "truncated") {
 		t.Fatal(full)
+	}
+}
+
+func TestJSONTextEncoding(t *testing.T) {
+	const text = "\"\\\n\t\x00<>&\u2028\u2029\xff"
+	v := value{
+		data: &record{
+			ctor: "tag",
+			fields: []field{
+				{
+					name: text,
+					value: value{
+						data: text,
+					},
+				},
+				{
+					name: "bytes",
+					value: value{
+						data: []byte{0, 1, 2},
+					},
+				},
+			},
+		},
+	}
+	const want = `{"type":"tag","\"\\\n\t\u0000\u003c\u003e\u0026\u2028\u2029�":"\"\\\n\t\u0000\u003c\u003e\u0026\u2028\u2029�","bytes":"AAEC"}`
+	if got, err := marshalJSON(v); err != nil || got != want {
+		t.Fatalf("JSON = %q, %v; want %q", got, err, want)
 	}
 }

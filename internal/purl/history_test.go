@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.astrophena.name/base/filelock"
@@ -116,14 +117,17 @@ func TestHistoryLock(t *testing.T) {
 	}
 	t.Cleanup(func() { lock.Close() })
 
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := h.load(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("load while locked: %v", err)
-	}
-	if err := h.save(ctx, "not saved"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("save while locked: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		if _, err := h.load(ctx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("load while locked: %v", err)
+		}
+		if err := h.save(ctx, "not saved"); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("save while locked: %v", err)
+		}
+	})
+
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -159,14 +163,21 @@ func TestHistoryBoundsAndFallback(t *testing.T) {
 	if want := filepath.Join(home, ".local", "state", "purl", "history"); h.f.Name() != want {
 		t.Fatalf("got %q, want %q", h.f.Name(), want)
 	}
+	// Seed the retained window once; one save exercises trimming.
+	var seed strings.Builder
+	for i := range historyLimit + 4 {
+		fmt.Fprintf(&seed, "%q\n", fmt.Sprint(i))
+	}
+	if _, err := h.f.WriteString(seed.String()); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.save(t.Context(), strings.Repeat("x", 17<<10)); err != nil {
 		t.Fatal(err)
 	}
-	for i := range historyLimit + 5 {
-		if err := h.save(t.Context(), fmt.Sprint(i)); err != nil {
-			t.Fatal(err)
-		}
+	if err := h.save(t.Context(), fmt.Sprint(historyLimit+4)); err != nil {
+		t.Fatal(err)
 	}
+
 	entries, err := h.load(t.Context())
 	if err != nil {
 		t.Fatal(err)

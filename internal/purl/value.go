@@ -14,8 +14,8 @@ import (
 	"go.astrophena.name/plug"
 )
 
-// Values and their contents are immutable after publication. typ preserves
-// schema names for completion and display without a separate type checker.
+// value and its contents are immutable after publication.
+// typ preserves schema names for completion and display.
 type value struct {
 	data any
 	typ  *plug.TypeExpr
@@ -40,7 +40,11 @@ func (r *record) lookup(name string) (value, bool) {
 	return value{}, false
 }
 
-func integer(n int64) value { return value{data: big.NewInt(n)} }
+func integer(n int64) value {
+	return value{
+		data: big.NewInt(n),
+	}
+}
 
 func typeName(v value) string {
 	if v.typ != nil {
@@ -178,10 +182,14 @@ func equal(a, b value) bool {
 
 func binary(op string, a, b value) (value, error) {
 	if op == "==" {
-		return value{data: equal(a, b)}, nil
+		return value{
+			data: equal(a, b),
+		}, nil
 	}
 	if op == "!=" {
-		return value{data: !equal(a, b)}, nil
+		return value{
+			data: !equal(a, b),
+		}, nil
 	}
 
 	switch op {
@@ -196,7 +204,9 @@ func binary(op string, a, b value) (value, error) {
 	case "+":
 		if x, ok := a.data.(string); ok {
 			if y, ok := b.data.(string); ok {
-				return value{data: x + y}, nil
+				return value{
+					data: x + y,
+				}, nil
 			}
 		}
 	}
@@ -223,7 +233,9 @@ func binary(op string, a, b value) (value, error) {
 			default:
 				return value{}, fmt.Errorf("invalid integer operator %q", op)
 			}
-			return value{data: z}, nil
+			return value{
+				data: z,
+			}, nil
 		}
 	}
 
@@ -232,16 +244,24 @@ func binary(op string, a, b value) (value, error) {
 	if xok && yok {
 		switch op {
 		case "+":
-			return value{data: x + y}, nil
+			return value{
+				data: x + y,
+			}, nil
 		case "-":
-			return value{data: x - y}, nil
+			return value{
+				data: x - y,
+			}, nil
 		case "*":
-			return value{data: x * y}, nil
+			return value{
+				data: x * y,
+			}, nil
 		case "/":
 			if y == 0 {
 				return value{}, fmt.Errorf("division by zero")
 			}
-			return value{data: x / y}, nil
+			return value{
+				data: x / y,
+			}, nil
 		}
 	}
 	return value{}, fmt.Errorf("operator %q does not accept %s and %s", op, typeName(a), typeName(b))

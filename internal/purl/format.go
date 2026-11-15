@@ -51,8 +51,8 @@ func identifier(name string) bool {
 
 func highlight(text string) string { return colorize(text, syntax.Script, 0) }
 
-// colorize uses the terminal's palette, without changing its background or
-// making ordinary identifiers compete with strings, keywords, and functions.
+// colorize highlights text in the terminal's palette.
+// It leaves the background and ordinary identifiers unchanged.
 // skip hides a clean byte prefix while retaining its lexical state.
 func colorize(text string, lexer chroma.Lexer, skip int) string {
 	text = clean(text)

@@ -109,7 +109,9 @@ func newSession(client *plug.Client, schema *plug.Schema) *session {
 	}
 
 	for name, fn := range builtins() {
-		s.env.bindings[name] = ready(value{data: fn})
+		s.env.bindings[name] = ready(value{
+			data: fn,
+		})
 	}
 
 	for _, typ := range schema.Types {
@@ -137,7 +139,9 @@ func newSession(client *plug.Client, schema *plug.Schema) *session {
 					typ:  &t,
 				}, nil
 			}
-			s.env.bindings[ctor.Name] = ready(value{data: fn})
+			s.env.bindings[ctor.Name] = ready(value{
+				data: fn,
+			})
 		}
 	}
 
@@ -149,12 +153,16 @@ func newSession(client *plug.Client, schema *plug.Schema) *session {
 			namespaces[ns] = &record{}
 		}
 		namespaces[ns].fields = append(namespaces[ns].fields, field{
-			name:  name,
-			value: value{data: s.method(info)},
+			name: name,
+			value: value{
+				data: s.method(info),
+			},
 		})
 	}
 	for name, r := range namespaces {
-		s.env.bindings[name] = ready(value{data: r})
+		s.env.bindings[name] = ready(value{
+			data: r,
+		})
 	}
 	return s
 }
@@ -284,9 +292,13 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 			case "nil", "null":
 				return value{}, nil
 			case "true":
-				return value{data: true}, nil
+				return value{
+					data: true,
+				}, nil
 			case "false":
-				return value{data: false}, nil
+				return value{
+					data: false,
+				}, nil
 			}
 			b, ok := s.lookup(env, n.name)
 			if !ok {
@@ -302,7 +314,9 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 			switch n.op {
 			case "!":
 				if b, ok := v.data.(bool); ok {
-					return value{data: !b}, nil
+					return value{
+						data: !b,
+					}, nil
 				}
 			case "+":
 				if _, ok := number(v); ok {
@@ -310,10 +324,14 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 				}
 			case "-":
 				if z, ok := v.data.(*big.Int); ok {
-					return value{data: new(big.Int).Neg(z)}, nil
+					return value{
+						data: new(big.Int).Neg(z),
+					}, nil
 				}
 				if f, ok := v.data.(float64); ok {
-					return value{data: -f}, nil
+					return value{
+						data: -f,
+					}, nil
 				}
 			}
 			return value{}, fmt.Errorf("operator %q does not accept %s", n.op, typeName(v))
@@ -401,7 +419,9 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 				}
 				xs = append(xs, v)
 			}
-			return value{data: xs}, nil
+			return value{
+				data: xs,
+			}, nil
 		case recordExpr:
 			r := &record{}
 			for _, arg := range n.fields {
@@ -418,7 +438,9 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 					value: v,
 				})
 			}
-			return value{data: r}, nil
+			return value{
+				data: r,
+			}, nil
 		case lambdaExpr:
 			fn := &function{
 				name:   "lambda",
@@ -429,7 +451,9 @@ func (s *session) eval(ctx context.Context, env *scope, x expr) (v value, err er
 					x:   n.body,
 				},
 			}
-			return value{data: fn}, nil
+			return value{
+				data: fn,
+			}, nil
 		case callExpr:
 			fn, args, err = s.callArgs(ctx, env, n, nil)
 			if err != nil {
@@ -547,7 +571,9 @@ func (s *session) method(info plug.MethodInfo) *function {
 			m := plugimpl.NewMethod(s.schema, info.ID, s.fieldsCodec(info.Fields), s.codec(info.Response), s.errorCodec(info.Error))
 			method = &m
 		}
-		return s.client.Call(ctx, *method, value{data: r})
+		return s.client.Call(ctx, *method, value{
+			data: r,
+		})
 	}
 	return fn
 }

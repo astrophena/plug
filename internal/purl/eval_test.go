@@ -7,129 +7,13 @@ package purl
 import (
 	"context"
 	"errors"
-	"net"
+	"fmt"
+	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 
-	"go.astrophena.name/plug"
 	"go.astrophena.name/plug/example/greeter"
 )
-
-func testServer(t *testing.T) (*plug.Server, *atomic.Int64, <-chan struct{}) {
-	t.Helper()
-	return newTestServer(t, true)
-}
-
-func newTestServer(t *testing.T, compression bool) (*plug.Server, *atomic.Int64, <-chan struct{}) {
-	t.Helper()
-	calls := new(atomic.Int64)
-	waiting := make(chan struct{})
-	s, err := plug.NewServer(&greeter.Schema, plug.ServerOptions{
-		Compression: compression,
-		Security: plug.Security{
-			Authenticate: func(context.Context, net.Conn) (plug.Principal, error) {
-				return plug.Principal{
-					Subject: "tester",
-				}, nil
-			},
-			Authorize: func(context.Context, plug.Principal, string, plug.MethodInfo, any) error { return nil },
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := greeter.RegisterHandlers(s, greeter.Handlers{
-		Ping: func(context.Context) error {
-			calls.Add(1)
-			return nil
-		},
-		GetUser: func(ctx context.Context, req greeter.GetUserRequest) (greeter.User, error) {
-			calls.Add(1)
-			if req.ID == 0 {
-				return greeter.User{}, &greeter.NotFound{
-					ID: req.ID,
-				}
-			}
-			if req.ID == -1 {
-				close(waiting)
-				<-ctx.Done()
-				return greeter.User{}, ctx.Err()
-			}
-			return greeter.User{
-				ID:     req.ID,
-				Name:   "Alice",
-				Labels: []string{"home", "work"},
-				Role: &greeter.Admin{
-					Level: 3,
-				},
-				Email: plug.Some("alice@example.test"),
-			}, nil
-		},
-		ListUsers: func(ctx context.Context, req greeter.ListUsersRequest) ([]greeter.User, error) {
-			calls.Add(1)
-			return []greeter.User{
-				{
-					ID:     1,
-					Name:   "Alice",
-					Labels: []string{},
-					Role:   &greeter.Guest{},
-				},
-				{
-					ID:     2,
-					Name:   "Bob",
-					Labels: []string{"work"},
-					Role: &greeter.Admin{
-						Level: 2,
-					},
-				},
-			}, nil
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return s, calls, waiting
-}
-
-func serveTest(t *testing.T, server *plug.Server, network, address string) string {
-	t.Helper()
-	listener, err := net.Listen(network, address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(ctx, listener) }()
-	t.Cleanup(func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Error(err)
-		}
-		if err := server.Shutdown(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	if network == "unix" {
-		return "unix://" + listener.Addr().String()
-	}
-	return "tcp://" + listener.Addr().String()
-}
-
-func testSession(t *testing.T) (*session, *atomic.Int64) {
-	t.Helper()
-	server, calls, _ := testServer(t)
-	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
-	s, err := connect(t.Context(), endpoint, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := s.client.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return s, calls
-}
 
 func evaluate(t *testing.T, s *session, source string) (value, error) {
 	t.Helper()
@@ -349,6 +233,48 @@ func TestCachedApplicationError(t *testing.T) {
 	}
 }
 
+func TestCancellationIsCached(t *testing.T) {
+	server, calls, waiting := testServer(t)
+	endpoint := serveTest(t, server, "tcp", "127.0.0.1:0")
+	s, err := connect(t.Context(), endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.client.Close()
+	if _, err := evaluate(t, s, "let pending = greeter.getUser(id: -1)"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	statements, err := parse("pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := s.execute(ctx, statements[0])
+		done <- err
+	}()
+	select {
+	case <-waiting:
+		cancel()
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := evaluate(t, s, "pending"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("canceled call was retried")
+	}
+	if _, err := evaluate(t, s, "greeter.ping()"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPipeEvaluatesOnce(t *testing.T) {
 	s := newSession(nil, &greeter.Schema)
 	var calls int
@@ -364,5 +290,214 @@ func TestPipeEvaluatesOnce(t *testing.T) {
 	v, err := evaluate(t, s, "next() | (x => x + x)")
 	if err != nil || format(v, 0) != "2" || calls != 1 {
 		t.Fatalf("got %v, %v, calls=%d", v, err, calls)
+	}
+}
+
+func TestBindingLookupSnapshots(t *testing.T) {
+	s := newSession(nil, &greeter.Schema)
+	for _, tc := range []struct {
+		source string
+		want   string
+	}{
+		{
+			"count([1])",
+			"1",
+		},
+		{
+			"let old = count; let saved = () => count([1]); let count = x => 99; count([1])",
+			"99",
+		},
+		{
+			"old([1]) + saved()",
+			"2",
+		},
+	} {
+		v, err := evaluate(t, s, tc.source)
+		if err != nil || format(v, 0) != tc.want {
+			t.Fatalf("%s = %s, %v; want %s", tc.source, format(v, 0), err, tc.want)
+		}
+	}
+	if _, err := evaluate(t, s, "missing"); err == nil {
+		t.Fatal("resolved an unknown name")
+	}
+	v, err := evaluate(t, s, "let missing = 7; missing")
+	if err != nil || format(v, 0) != "7" {
+		t.Fatalf("new binding = %s, %v", format(v, 0), err)
+	}
+}
+
+func TestLiteralAndSumOwnership(t *testing.T) {
+	for source, want := range map[string]string{
+		"let unused = 1e10000; 42": "42",
+		"false && 1e10000":         "false",
+		"let n = () => 18446744073709551615; -n(); n() + 1; n()":        "18446744073709551615",
+		"let xs = [18446744073709551615, 1]; xs | sum; xs | sum; xs[0]": "18446744073709551615",
+		"((a,b,c,d,e,f,g,h,i) => a+i)(1,2,3,4,5,6,7,8,9)":               "10",
+	} {
+		t.Run(source, func(t *testing.T) {
+			v, err := evaluate(t, newSession(nil, &greeter.Schema), source)
+			if err != nil || format(v, 0) != want {
+				t.Fatalf("got %s, %v, want %s", format(v, 0), err, want)
+			}
+		})
+	}
+}
+
+func TestTailCalls(t *testing.T) {
+	for name, source := range map[string]string{
+		"self":     "let loop = (self, n) => n == 0 || self(self, n - 1); loop(loop, %d)",
+		"mutual":   "let even = (even, odd, n) => n == 0 || odd(even, odd, n - 1); let odd = (even, odd, n) => n != 0 && even(even, odd, n - 1); even(even, odd, %d)",
+		"pipeline": "let loop = (self, n) => n == 0 || (self | (f => f(f, n - 1))); loop(loop, %d)",
+		"callback": "let loop = (self, n) => n == 0 || self(self, n - 1); [%d] | all(n => loop(loop, n))",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSession(nil, &greeter.Schema)
+			v, err := evaluate(t, s, fmt.Sprintf(source, 4*maxDepth))
+			if err != nil || v.data != true {
+				t.Fatalf("tail call = %v, %v", v.data, err)
+			}
+			if s.depth != 0 {
+				t.Fatalf("evaluation retained depth %d", s.depth)
+			}
+		})
+	}
+}
+
+func TestTailCallStack(t *testing.T) {
+	s := newSession(nil, &greeter.Schema)
+	var depths []int
+	s.bind("probe", ready(value{
+		data: &function{
+			name: "probe",
+			invoke: func(context.Context, []value) (value, error) {
+				var pcs [128]uintptr
+				depths = append(depths, runtime.Callers(0, pcs[:]))
+				return value{
+					data: true,
+				}, nil
+			},
+		},
+	}))
+	_, err := evaluate(t, s, fmt.Sprintf("let loop = (self, n) => (n == 0 && probe()) || self(self, n - 1); loop(loop, 0); loop(loop, %d)", 4*maxDepth))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(depths) != 2 || depths[1] > depths[0]+4 || depths[1] == 128 {
+		t.Fatalf("tail calls grew the Go stack: %v", depths)
+	}
+}
+
+func TestNonTailCallDepth(t *testing.T) {
+	s := newSession(nil, &greeter.Schema)
+	_, err := evaluate(t, s, fmt.Sprintf("let loop = (self, n) => n == 0 || !self(self, n - 1); loop(loop, %d)", 4*maxDepth))
+	if err == nil || !strings.Contains(err.Error(), "evaluation is too deeply nested") {
+		t.Fatalf("non-tail recursion = %v", err)
+	}
+	if s.depth != 0 {
+		t.Fatalf("evaluation retained depth %d", s.depth)
+	}
+}
+
+func TestTailCallCancellation(t *testing.T) {
+	s := newSession(nil, &greeter.Schema)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var calls int
+	s.bind("step", ready(value{
+		data: &function{
+			name: "step",
+			invoke: func(context.Context, []value) (value, error) {
+				calls++
+				if calls == 3 {
+					cancel()
+				}
+				return value{
+					data: true,
+				}, nil
+			},
+		},
+	}))
+	stmts, err := parse("let loop = self => step() && self(self); loop(loop)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range stmts {
+		_, _, err = s.execute(ctx, st)
+		if err != nil {
+			break
+		}
+	}
+	if !errors.Is(err, context.Canceled) || calls != 3 || s.depth != 0 {
+		t.Fatalf("canceled tail calls: %v, calls=%d, depth=%d", err, calls, s.depth)
+	}
+}
+
+func TestTailCallClosureCapture(t *testing.T) {
+	s := newSession(nil, &greeter.Schema)
+	v, err := evaluate(t, s, "let keep = x => () => x; let forward = (f, x) => f(x); let one = forward(keep, 1); one(); let two = forward(keep, 2); two(); one() + two()")
+	if err != nil || format(v, 0) != "3" {
+		t.Fatalf("captured values = %v, %v", v.data, err)
+	}
+}
+
+func TestTailCallErrors(t *testing.T) {
+	for source, want := range map[string]string{
+		"false || 1":                     "1:7: operator \"||\" requires bool",
+		"true && 1":                      "1:6: operator \"&&\" requires bool",
+		"false || (true && 1)":           "1:16: operator \"&&\" requires bool",
+		"let f = x => x;\nfalse || f(1)": "2:7: operator \"||\" requires bool",
+		"let f = () => missing;\nf()":    "1:15: unknown name \"missing\"",
+		"let f = () => 1 / 0;\nf()":      "1:17: division by zero",
+	} {
+		t.Run(source, func(t *testing.T) {
+			_, err := evaluate(t, newSession(nil, &greeter.Schema), source)
+			if err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestCallArgumentOrder(t *testing.T) {
+	for source, tc := range map[string]struct {
+		want  string
+		calls int
+	}{
+		"pair(next(), next())": {
+			want:  "12",
+			calls: 2,
+		},
+		"pair(b: next(), a: next())": {
+			want:  "21",
+			calls: 2,
+		},
+		"next() | pair(b: next())": {
+			want:  "12",
+			calls: 2,
+		},
+		"pair(a: next(), a: next())": {},
+		"pair(missing: next())":      {},
+		"pair(a: next())":            {},
+		"next() | pair(missing: next())": {
+			calls: 1,
+		},
+	} {
+		t.Run(source, func(t *testing.T) {
+			s := newSession(nil, &greeter.Schema)
+			var calls int
+			s.bind("next", ready(value{
+				data: &function{
+					name: "next",
+					invoke: func(context.Context, []value) (value, error) {
+						calls++
+						return integer(int64(calls)), nil
+					},
+				},
+			}))
+			v, err := evaluate(t, s, "let pair = (a, b) => a * 10 + b; "+source)
+			if calls != tc.calls || (err != nil) != (tc.want == "") || err == nil && format(v, 0) != tc.want {
+				t.Fatalf("argument evaluation: %s, %v, calls=%d", format(v, 0), err, calls)
+			}
+		})
 	}
 }
